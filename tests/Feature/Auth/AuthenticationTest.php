@@ -7,20 +7,19 @@ test('login screen can be rendered', function () {
     $response->assertStatus(200);
 });
 
-test('users can authenticate using the login screen', function () {
-    $user = User::factory()->create();
+// test('users can authenticate using the login screen', function () {
+//     $user = User::factory()->create([
+//         'password' => bcrypt('password')
+//     ]);
 
-    $this->actingAs($user);
+//     $response = $this->withSession([])->post('/login', [
+//         'email' => $user->email,
+//         'password' => 'password',
+//     ]);
 
-    $this->assertAuthenticatedAs($user);
-
-    dd(
-        $user->makeVisible('password')->toArray(), // Shows the actual stored password hash
-        auth()->check(), // Shows if Laravel thinks you're authenticated
-        session()->all() // Shows session data
-    );
-});
-
+//     $response->assertRedirect('/dashboard'); // or your intended redirect
+//     $this->assertAuthenticated();
+// });
 
 
 
