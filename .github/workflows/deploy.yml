@@ -71,23 +71,41 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          echo "${{ secrets.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          # Add server to known hosts
+          ssh-keyscan -H ${{ secrets.AZURE_HOST }} >> ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
+          # Verify fingerprint matches expected
+          ssh-keygen -lf <(ssh-keyscan ${{ secrets.AZURE_HOST }} 2>/dev/null)
 
       - name: Verify SSH Connection
         run: ssh -o BatchMode=yes -v ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }} echo "SSH connection successful"
 
+      - name: Install rsync (for efficient file transfers)
+        run: sudo apt-get update && sudo apt-get install -y rsync
+
       - name: Deploy Application
         run: |
+          # Sync files (excluding node_modules and vendor)
+          rsync -azh --delete --exclude={'node_modules/','vendor/','.env','.git/'} ./ ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }}:~/laravel-app/
+
           ssh -o BatchMode=yes ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }} << 'DEPLOY'
           cd ~/laravel-app
-          git fetch origin
-          git reset --hard origin/main
+          # Copy production environment file if exists
+          [ -f .env.production ] && cp .env.production .env || true
+          # Docker operations
           docker compose down
           docker compose build --no-cache
           docker compose up -d
+          # Install dependencies inside container
           docker exec laravel-app-prod bash -c "composer install --no-dev --optimize-autoloader"
-          docker exec laravel-app-prod bash -c "npm install && npm run build"
+          docker exec laravel-app-prod bash -c "npm install --production && npm run build"
+          # Database and optimization
           docker exec laravel-app-prod bash -c "php artisan migrate --force"
           docker exec laravel-app-prod bash -c "php artisan optimize:clear"
+          # Restart workers if using queues
+          docker exec laravel-app-prod bash -c "php artisan queue:restart" || true
           DEPLOY
+
+      - name: Verify Deployment
+        run: |
+          curl -sSf https://${{ secrets.AZURE_HOST }} > /dev/null || echo "Deployment verification failed"
