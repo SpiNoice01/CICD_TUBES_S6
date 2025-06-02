@@ -7,19 +7,33 @@ test('login screen can be rendered', function () {
     $response->assertStatus(200);
 });
 
-// test('users can authenticate using the login screen', function () {
-//     $user = User::factory()->create([
-//         'password' => bcrypt('password')
-//     ]);
+test('users can authenticate', function () {
+    // Clear any previous sessions
+    $this->flushSession();
 
-//     $response = $this->withSession([])->post('/login', [
-//         'email' => $user->email,
-//         'password' => 'password',
-//     ]);
+    $user = User::factory()->create([
+        'password' => Hash::make('password')
+    ]);
 
-//     $response->assertRedirect('/dashboard'); // or your intended redirect
-//     $this->assertAuthenticated();
-// });
+    $response = $this->post('/login', [
+        'email' => $user->email,
+        'password' => 'password',
+    ]);
+
+    // Debug statements
+    dump([
+        'Status' => $response->getStatusCode(),
+        'Redirect' => $response->headers->get('Location'),
+        'Authenticated' => auth()->check(),
+        'Session' => session()->all(),
+        'User' => auth()->user()?->toArray()
+    ]);
+
+    $response->assertRedirect('/dashboard');
+    $this->assertAuthenticated();
+});
+
+
 
 
 
