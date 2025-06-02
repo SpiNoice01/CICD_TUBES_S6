@@ -8,12 +8,23 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\View\View;
+use App\Providers\RouteServiceProvider;
+use Illuminate\Validation\ValidationException;
 
 class AuthenticatedSessionController extends Controller
 {
     /**
      * Display the login view.
      */
+
+    public function authenticate(Request $request): void
+    {
+        if (!Auth::attempt($request->only('email', 'password'), $request->boolean('remember'))) {
+            throw ValidationException::withMessages([
+                'email' => __('auth.failed'),
+            ]);
+        }
+    }
     public function create(): View
     {
         return view('auth.login');
@@ -24,11 +35,9 @@ class AuthenticatedSessionController extends Controller
      */
     public function store(LoginRequest $request): RedirectResponse
     {
-        $request->authenticate();
-
         $request->session()->regenerate();
 
-        return redirect()->intended(route('brands.index', absolute: false));
+        return redirect()->intended(RouteServiceProvider::HOME);
     }
 
     /**
