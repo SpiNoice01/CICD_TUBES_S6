@@ -70,3 +70,6 @@ jobs:
           docker-compose up -d --build
           docker exec -it laravel-app-prod bash -c "php artisan migrate --force"
           EOF
+
+
+# 
