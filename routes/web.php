@@ -14,7 +14,11 @@ use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
 
-
+Route::middleware(['auth'])->group(function () {
+    Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
+    Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
+    Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
+});
 
 Route::get('/', [FrontConroller::class, 'home'])->name('front.home');
 Route::get('/about', [FrontConroller::class, 'about'])->name('front.about');
@@ -32,18 +36,18 @@ Route::get('logout', function () {
 })->name('logout');
 
 
-Route::prefix('/admin')->middleware('auth')->group(function(){
+Route::prefix('/admin')->middleware('auth')->group(function () {
     Route::resource('brands', BrandController::class);
     Route::resource('categories', CategoryController::class);
     Route::resource('products', ProductController::class);
     Route::resource('packages', PackageController::class);
     Route::resource('renters', RentersController::class);
-    
-    
+
+
 });
 
 
 
-require __DIR__.'/auth.php';
+require __DIR__ . '/auth.php';
 
 
