@@ -13,9 +13,13 @@ jobs:
         env:
           MYSQL_ROOT_PASSWORD: root
           MYSQL_DATABASE: laravel
+          MYSQL_USER: laravel
+          MYSQL_PASSWORD: password
         ports:
           - 3306:3306
         options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
+        volumes:
+          - mysql-data:/var/lib/mysql
 
     steps:
       - uses: actions/checkout@v4
@@ -26,14 +30,22 @@ jobs:
           php-version: "8.2"
           extensions: mbstring, exif, pcntl, gd, pdo_mysql, zip
           ini-values: memory_limit=512M
+          coverage: none
 
       - name: Install dependencies
         run: |
-          composer install --no-progress --prefer-dist
-          cp .env.example .env.test
-          php artisan key:generate --env=test
+          composer install --no-progress --prefer-dist --optimize-autoloader
+          cp .env.example .env.testing
+          echo "APP_KEY=$(php artisan key:generate --show --no-ansi)" >> .env.testing
+          echo "APP_ENV=testing" >> .env.testing
+          echo "DB_CONNECTION=mysql" >> .env.testing
+          echo "DB_HOST=127.0.0.1" >> .env.testing
+          echo "DB_PORT=3306" >> .env.testing
+          echo "DB_DATABASE=laravel" >> .env.testing
+          echo "DB_USERNAME=root" >> .env.testing
+          echo "DB_PASSWORD=root" >> .env.testing
 
-      - name: Run tests
+      - name: Execute tests
         env:
           APP_ENV: testing
           DB_CONNECTION: mysql
@@ -43,8 +55,9 @@ jobs:
           DB_USERNAME: root
           DB_PASSWORD: root
         run: |
+          php artisan config:clear
           php artisan migrate:fresh --force
-          php artisan test
+          php artisan test --stop-on-failure
 
   deploy:
     needs: test
@@ -59,17 +72,22 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Deploy to Azure
+      - name: Setup deployment environment
         run: |
           ssh -o StrictHostKeyChecking=no ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }} << 'EOF'
           cd ~/laravel-app
-          git reset --hard
-          git pull origin main
-          docker-compose down
-          docker rmi laravel-app-prod
-          docker-compose up -d --build
-          docker exec -it laravel-app-prod bash -c "php artisan migrate --force"
+          git fetch origin
+          git reset --hard origin/main
           EOF
 
-
-# 
+      - name: Deploy application
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }} << 'EOF'
+          cd ~/laravel-app
+          docker compose down
+          docker compose build --no-cache
+          docker compose up -d
+          docker exec -it laravel-app-prod bash -c "composer install --no-dev --optimize-autoloader"
+          docker exec -it laravel-app-prod bash -c "php artisan migrate --force"
+          docker exec -it laravel-app-prod bash -c "php artisan optimize:clear"
+          EOF
