@@ -52,12 +52,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: laravel-app
-          path: ${{ github.workspace }}/artifact
+          path: ${{ github.workspace }}
 
-      - name: Verify artifact exists
+      - name: Verify artifact
         run: |
-          ls -lh ${{ github.workspace }}/artifact
-          [ -f "${{ github.workspace }}/artifact/laravel-app.tar.gz" ] || exit 1
+          ls -lh ${{ github.workspace }}/laravel-app.tar.gz
+          [ -f "${{ github.workspace }}/laravel-app.tar.gz" ] || exit 1
 
       - name: Deploy to Server
         uses: appleboy/ssh-action@v1
@@ -67,35 +67,56 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             set -e # Exit on error
-            echo "Starting deployment..."
+            echo "=== Starting Deployment ==="
 
-            # Create deployment directory
+            # 1. Prepare directory
             sudo mkdir -p ${{ env.DEPLOY_PATH }}
             sudo chown -R ${{ secrets.SSH_USERNAME }}:www-data ${{ env.DEPLOY_PATH }}
 
-            # Copy artifact to server
-            scp -o StrictHostKeyChecking=no ${{ github.workspace }}/artifact/laravel-app.tar.gz ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/tmp/laravel-app.tar.gz
+            # 2. Transfer file directly via SSH action
+            echo "Transferring deployment package..."
+            tar -xzf laravel-app.tar.gz -C ${{ env.DEPLOY_PATH }}
 
-            # Extract on server
-            ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
-              sudo rm -rf ${{ env.DEPLOY_PATH }}/*
-              sudo tar -xzf /tmp/laravel-app.tar.gz -C ${{ env.DEPLOY_PATH }}
-              rm /tmp/laravel-app.tar.gz
+            # 3. Install dependencies
+            echo "Installing dependencies..."
+            cd ${{ env.DEPLOY_PATH }}
+            sudo -u www-data composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
 
-              # Install dependencies
-              cd ${{ env.DEPLOY_PATH }}
-              sudo -u www-data composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
+            # 4. Setup environment
+            echo "Configuring environment..."
+            [ ! -f .env ] && sudo cp .env.example .env && sudo chown www-data:www-data .env
+            sudo -u www-data php artisan key:generate
 
-              # Setup environment
-              [ ! -f .env ] && sudo cp .env.example .env && sudo chown www-data:www-data .env
-              sudo -u www-data php artisan key:generate
+            # 5. Set permissions
+            echo "Setting permissions..."
+            sudo chmod -R 775 storage bootstrap/cache
+            sudo chown -R www-data:www-data storage bootstrap/cache
 
-              # Set permissions
-              sudo chmod -R 775 storage bootstrap/cache
-              sudo chown -R www-data:www-data storage bootstrap/cache
+            # 6. Configure Nginx
+            echo "Configuring web server..."
+            sudo bash -c 'cat > /etc/nginx/sites-available/laravel <<EOF
+            server {
+                listen 80;
+                server_name _;
+                root ${{ env.DEPLOY_PATH }}/public;
+                index index.php;
+                location / {
+                    try_files \$uri \$uri/ /index.php?\$query_string;
+                }
+                location ~ \.php$ {
+                    include snippets/fastcgi-php.conf;
+                    fastcgi_pass unix:/var/run/php/php8.2-fpm.sock;
+                }
+            }
+            EOF'
 
-              # Restart services
-              sudo systemctl restart php8.2-fpm nginx
-            "
+            sudo ln -sf /etc/nginx/sites-available/laravel /etc/nginx/sites-enabled/
+            sudo rm -f /etc/nginx/sites-enabled/default
 
-            echo "✅ Deployment completed successfully"
+            # 7. Restart services
+            echo "Restarting services..."
+            sudo systemctl restart php8.2-fpm nginx
+            sudo systemctl enable php8.2-fpm nginx
+
+            echo "=== Deployment Successful ==="
+            echo "Access your site at: http://$(curl -s ifconfig.me)"
