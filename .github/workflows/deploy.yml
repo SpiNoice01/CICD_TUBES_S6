@@ -10,6 +10,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install rsync
+        run: sudo apt-get update && sudo apt-get install -y rsync
+
       - name: Deploy to Production
         uses: appleboy/ssh-action@v0.1.7
         with:
@@ -29,9 +32,13 @@ jobs:
               exit 1
             fi
 
-            # 2. Atomic deployment process
-            echo "--- Syncing Files ---"
+            # 2. Prepare directory structure
+            echo "--- Preparing Directory ---"
             mkdir -p ~/laravel-app-new
+            cd ~/laravel-app-new
+
+            # 3. Sync only necessary files (from GitHub workspace root)
+            echo "--- Syncing Files ---"
             rsync -az --delete \
               --exclude=.git \
               --exclude=node_modules \
@@ -39,27 +46,29 @@ jobs:
               --exclude=storage \
               --exclude=bootstrap/cache \
               --exclude=.env \
-              $GITHUB_WORKSPACE/ ~/laravel-app-new/
+              --exclude=docker \
+              $GITHUB_WORKSPACE/ .
 
-            # 3. Prepare production
-            echo "--- Preparing Production ---"
-            chmod -R 755 ~/laravel-app-new/storage
-            chmod -R 755 ~/laravel-app-new/bootstrap/cache
+            # 4. Set proper permissions
+            echo "--- Setting Permissions ---"
+            chmod -R 755 storage
+            chmod -R 755 bootstrap/cache
 
-            # 4. Docker operations
+            # 5. Docker operations
             echo "--- Starting Containers ---"
-            cd ~/laravel-app-new
             docker compose down || true
             docker compose build --no-cache
             docker compose up -d
 
-            # 5. Atomic switch
+            # 6. Atomic switch
             echo "--- Finalizing Deployment ---"
+            cd ~
             rm -rf ~/laravel-app-old
             mv ~/laravel-app ~/laravel-app-old || true
             mv ~/laravel-app-new ~/laravel-app
 
-            # 6. Cleanup
+            # 7. Cleanup
+            echo "--- Cleaning Up ---"
             docker system prune -f || true
             rm -rf ~/laravel-app-old || true
 
