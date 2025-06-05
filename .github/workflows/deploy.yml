@@ -17,23 +17,22 @@ jobs:
           username: ${{ secrets.SSH_USERNAME }}
           password: ${{ secrets.SSH_PASSWORD }}
           port: 22
-
+          script_timeout: 15m
           script: |
-            set -e
+            set -ex
             echo "=== Starting Deployment ==="
 
-            # 1. Check disk space first
+            # 1. Disk space check (fail if >90% used)
+            echo "--- Disk Space Status ---"
             df -h
             if [ $(df --output=pcent / | tail -1 | tr -dc '0-9') -gt 90 ]; then
-              echo "::error::Disk space is critically low!"
+              echo "::error::Aborting: Disk space over 90% used"
               exit 1
             fi
 
-            # 2. Clean previous deployment
-            rm -rf ~/laravel-app-temp
-            mkdir -p ~/laravel-app-temp
-
-            # 3. Precise rsync with proper source path
+            # 2. Atomic deployment process
+            echo "--- Syncing Files ---"
+            mkdir -p ~/laravel-app-new
             rsync -az --delete \
               --exclude=.git \
               --exclude=node_modules \
@@ -41,24 +40,30 @@ jobs:
               --exclude=storage \
               --exclude=bootstrap/cache \
               --exclude=.env \
-              $GITHUB_WORKSPACE/ ~/laravel-app-temp/
+              $GITHUB_WORKSPACE/ ~/laravel-app-new/
 
-            # 4. Swap directories atomically
-            rm -rf ~/laravel-app-old
-            mv ~/laravel-app ~/laravel-app-old || true
-            mv ~/laravel-app-temp ~/laravel-app
+            # 3. Prepare production
+            echo "--- Preparing Production ---"
+            chmod -R 755 ~/laravel-app-new/storage
+            chmod -R 755 ~/laravel-app-new/bootstrap/cache
 
-            # 5. Set permissions
-            chmod -R 755 ~/laravel-app/storage
-            chmod -R 755 ~/laravel-app/bootstrap/cache
-
-            # 6. Docker operations
-            cd ~/laravel-app
+            # 4. Docker operations
+            echo "--- Starting Containers ---"
+            cd ~/laravel-app-new
             docker compose down || true
             docker compose build --no-cache
             docker compose up -d
 
-            # 7. Cleanup
+            # 5. Atomic switch
+            echo "--- Finalizing Deployment ---"
             rm -rf ~/laravel-app-old
+            mv ~/laravel-app ~/laravel-app-old || true
+            mv ~/laravel-app-new ~/laravel-app
 
-            echo "=== Deployment Complete ==="
+            # 6. Cleanup
+            docker system prune -f || true
+            rm -rf ~/laravel-app-old || true
+
+            echo "=== Deployment Successful ==="
+            echo "--- Final Disk Usage ---"
+            df -h
