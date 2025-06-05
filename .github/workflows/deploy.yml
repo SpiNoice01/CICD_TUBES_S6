@@ -76,7 +76,6 @@ jobs:
           script: |
             # Sync files (excluding node_modules and vendor)
             rsync -azh --delete --exclude={'node_modules/','vendor/','.env','.git/'} ./ ~/laravel-app/
-
             cd ~/laravel-app
             # Copy production environment file if exists
             [ -f .env.production ] && cp .env.production .env || true
@@ -92,6 +91,7 @@ jobs:
             docker exec laravel-app-prod bash -c "php artisan optimize:clear"
             # Restart workers if using queues
             docker exec laravel-app-prod bash -c "php artisan queue:restart" || true
+          debug: true
 
       - name: Verify Deployment
         run: |
