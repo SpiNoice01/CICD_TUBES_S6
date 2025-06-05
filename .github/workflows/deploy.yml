@@ -34,7 +34,7 @@ jobs:
           # Create clean build directory
           mkdir -p deployment_build
 
-          # Copy only necessary files (exclude development files)
+          # Copy only necessary files
           rsync -a \
             --exclude='.git' \
             --exclude='.github' \
@@ -43,11 +43,12 @@ jobs:
             --exclude='tests' \
             ./ deployment_build/
 
-          # Create tar archive from the clean copy
-          cd deployment_build && \
+          # Create tar archive
+          cd deployment_build
           tar -czf ../laravel-app.tar.gz .
+          cd ..
 
-          # Verify archive
+          # Verify archive (now in correct directory)
           ls -lh laravel-app.tar.gz
 
       - name: Upload artifact
@@ -74,6 +75,7 @@ jobs:
           username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
+          script_timeout: 10m
           script: |
             # Create backup
             TIMESTAMP=$(date +%Y%m%d%H%M%S)
@@ -84,19 +86,20 @@ jobs:
             sudo mkdir -p ${{ env.DEPLOY_PATH }}
             sudo chown ${{ secrets.SSH_USERNAME }}:www-data ${{ env.DEPLOY_PATH }}
 
-            # Extract and set permissions
+            # Extract archive
             tar -xzf laravel-app.tar.gz -C ${{ env.DEPLOY_PATH }}
+            rm laravel-app.tar.gz
             cd ${{ env.DEPLOY_PATH }}
 
             # Environment setup
             [ ! -f .env ] && cp .env.example .env
             php artisan key:generate
 
-            # Permissions
+            # Set permissions
             sudo chmod -R 775 storage bootstrap/cache
             sudo chown -R ${{ secrets.SSH_USERNAME }}:www-data .
 
-            # Cache optimization
+            # Optimize
             php artisan config:cache
             php artisan route:cache
             php artisan view:cache
@@ -104,4 +107,4 @@ jobs:
             # Restart PHP-FPM
             sudo systemctl restart php8.2-fpm
 
-            echo "Deployment completed successfully!"
+            echo "🚀 Deployment successful! App is live at ${{ env.DEPLOY_PATH }}"
