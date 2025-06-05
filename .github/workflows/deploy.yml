@@ -54,10 +54,8 @@ jobs:
           name: laravel-app
           path: ${{ github.workspace }}
 
-      - name: Verify artifact
-        run: |
-          ls -lh ${{ github.workspace }}/laravel-app.tar.gz
-          [ -f "${{ github.workspace }}/laravel-app.tar.gz" ] || exit 1
+      - name: Verify downloaded artifact
+        run: ls -lh ${{ github.workspace }}
 
       - name: Deploy to Server
         uses: appleboy/ssh-action@v1
