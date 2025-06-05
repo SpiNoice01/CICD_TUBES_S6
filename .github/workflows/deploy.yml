@@ -105,7 +105,7 @@ jobs:
                 }
                 location ~ \.php$ {
                     include snippets/fastcgi-php.conf;
-                    fastcgi_pass unix:/var/run/php/php8.2-fpm.sock;
+                    fastcgi_pass unix:/var/run/php/php${{ env.PHP_VERSION }}-fpm.sock;
                 }
             }
             EOF'
@@ -115,8 +115,8 @@ jobs:
 
             # 7. Restart services
             echo "Restarting services..."
-            sudo systemctl restart php8.2-fpm nginx
-            sudo systemctl enable php8.2-fpm nginx
+            sudo systemctl restart php${{ env.PHP_VERSION }}-fpm nginx
+            sudo systemctl enable php${{ env.PHP_VERSION }}-fpm nginx
 
             echo "=== Deployment Successful ==="
             echo "Access your site at: http://$(curl -s ifconfig.me)"
