@@ -10,28 +10,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install SSH Key
-        uses: shimataro/ssh-key-action@v2
-        with:
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          known_hosts: ${{ secrets.SSH_KNOWN_HOSTS }}
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          echo "Host *" > ~/.ssh/config
+          echo "  StrictHostKeyChecking no" >> ~/.ssh/config
 
       - name: Deploy via SSH
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-          # Create directory (no sudo needed)
-          mkdir -p ~/laravel-app/public
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
+          # Create directory
+          mkdir -p ~/laravel-app
 
-          # Copy files directly from GitHub
-          git clone https://github.com/${{ github.repository }}.git ~/laravel-temp
-          cp -r ~/laravel-temp/* ~/laravel-app/
-          rm -rf ~/laravel-temp
+          # Clone your repo directly
+          git clone https://github.com/${{ github.repository }}.git ~/laravel-app
 
-          # Minimal Laravel setup
+          # Minimal setup
           cd ~/laravel-app
           composer install --no-dev --optimize-autoloader
           [ ! -f .env ] && cp .env.example .env && php artisan key:generate
 
-          # Quick PHP server (no Nginx needed for homework)
+          # Start PHP server
           nohup php artisan serve --host=0.0.0.0 --port=8000 > /dev/null 2>&1 &
+          echo "Your app is running at: http://$(curl -s ifconfig.me):8000"
           EOF
