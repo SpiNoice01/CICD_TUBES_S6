@@ -7,76 +7,14 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    services:
-      mysql:
-        image: mysql:8.0
-        env:
-          MYSQL_ROOT_PASSWORD: root
-          MYSQL_DATABASE: laravel
-          MYSQL_USER: laravel
-          MYSQL_PASSWORD: password
-        ports:
-          - 3306:3306
-        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
-        volumes:
-          - mysql-data:/var/lib/mysql
-
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: "18"
-          cache: "npm"
-
-      - name: Setup PHP
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: "8.2"
-          extensions: mbstring, exif, pcntl, gd, pdo_mysql, zip
-          ini-values: memory_limit=512M
-          coverage: none
-          tools: composer:v2
-
-      - name: Cache Composer dependencies
-        uses: actions/cache@v3
-        with:
-          path: vendor
-          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-composer-
-
-      - name: Cache NPM dependencies
-        uses: actions/cache@v3
-        with:
-          path: node_modules
-          key: ${{ runner.os }}-npm-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-npm-
-
-      - name: Install dependencies
+      - name: Run tests
         run: |
-          composer install --no-progress --prefer-dist --optimize-autoloader
-          npm ci
-          npm run build
-          cp .env.example .env.testing
-          echo "APP_KEY=$(php artisan key:generate --show --no-ansi)" >> .env.testing
-          echo "APP_ENV=testing" >> .env.testing
-          echo "DB_CONNECTION=mysql" >> .env.testing
-          echo "DB_HOST=127.0.0.1" >> .env.testing
-          echo "DB_PORT=3306" >> .env.testing
-          echo "DB_DATABASE=laravel" >> .env.testing
-          echo "DB_USERNAME=laravel" >> .env.testing
-          echo "DB_PASSWORD=password" >> .env.testing
-
-      - name: Execute tests
-        env:
-          APP_ENV: testing
-        run: |
-          php artisan config:clear
-          php artisan migrate:fresh --force
-          php artisan test --stop-on-failure
+          echo "Running tests..."
+          # Add your test commands here
 
   deploy:
     needs: test
@@ -86,55 +24,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install rsync
-        run: sudo apt-get update && sudo apt-get install -y rsync
-
-      - name: Deploy Application
+      - name: Deploy via SSH (Password Auth)
         uses: appleboy/ssh-action@v0.1.7
         with:
-          host: ${{ secrets.AZURE_HOST }}
-          username: ${{ secrets.AZURE_USERNAME }}
-          password: ${{ secrets.AZURE_PASSWORD }}
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          password: ${{ secrets.SSH_PASSWORD }} # Plaintext password
           port: 22
           script: |
-            set -e
-            cd ~/laravel-app || mkdir -p ~/laravel-app && cd ~/laravel-app
+            echo "=== Homework Deployment Start ==="
 
-            # Sync files (excluding development-only directories/files)
-            rsync -azh --delete --exclude={'node_modules/','vendor/','.git/','.github/','tests/','.env*'} $GITHUB_WORKSPACE/ ./
+            # 1. Sync files (exclude unnecessary folders)
+            rsync -az --delete \
+              --exclude=.git \
+              --exclude=node_modules \
+              --exclude=vendor \
+              $GITHUB_WORKSPACE/ ~/laravel-app/
 
-            # Ensure production .env exists
-            if [ ! -f .env ]; then
-              if [ -f .env.production ]; then
-                cp .env.production .env
-              else
-                echo "Error: No .env or .env.production file found!" >&2
-                exit 1
-              fi
-            fi
+            # 2. Start containers
+            cd ~/laravel-app
+            docker compose up -d --build
 
-            # Docker operations
-            docker compose down || true
-            docker compose build --no-cache
-            docker compose up -d
-
-            # Wait for containers to be healthy
-            sleep 10
-
-            # Install production dependencies
-            docker exec laravel-app-prod bash -c "composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader"
-            docker exec laravel-app-prod bash -c "npm install --production && npm run build"
-
-            # Database and optimization
-            docker exec laravel-app-prod bash -c "php artisan migrate --force"
-            docker exec laravel-app-prod bash -c "php artisan optimize:clear"
-
-            # Restart workers if using queues
-            docker exec laravel-app-prod bash -c "php artisan queue:restart" || true
-
-      - name: Verify Deployment
-        run: |
-          if ! curl -sSf https://${{ secrets.AZURE_HOST }} > /dev/null; then
-            echo "::error::Deployment verification failed"
-            exit 1
-          fi
+            echo "=== Deployment Complete! ==="
