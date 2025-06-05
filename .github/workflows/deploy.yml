@@ -3,7 +3,6 @@ name: Deploy Laravel to Azure VM
 on:
   push:
     branches: [main]
-  workflow_dispatch:
 
 env:
   DEPLOY_PATH: /var/www/laravel-app
@@ -21,7 +20,6 @@ jobs:
         with:
           php-version: ${{ env.PHP_VERSION }}
           extensions: mbstring, dom, fileinfo, mysql, sqlite, curl, gd, intl, bcmath, soap, zip
-          tools: composer:v2
 
       - name: Install dependencies
         run: |
@@ -29,34 +27,18 @@ jobs:
           npm install
           npm run build
 
-      - name: Prepare deployment package
+      - name: Create deployment package
         run: |
-          # Create clean build directory
           mkdir -p deployment_build
-
-          # Copy only necessary files
-          rsync -a \
-            --exclude='.git' \
-            --exclude='.github' \
-            --exclude='node_modules' \
-            --exclude='storage/*' \
-            --exclude='tests' \
-            ./ deployment_build/
-
-          # Create tar archive
-          cd deployment_build
-          tar -czf ../laravel-app.tar.gz .
-          cd ..
-
-          # Verify archive (now in correct directory)
-          ls -lh laravel-app.tar.gz
+          rsync -a --exclude='.git' --exclude='.github' --exclude='node_modules' ./ deployment_build/
+          cd deployment_build && tar -czf ../laravel-app.tar.gz .
+          ls -lh ../laravel-app.tar.gz
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: laravel-app
           path: laravel-app.tar.gz
-          retention-days: 1
 
   deploy:
     needs: build
@@ -68,43 +50,42 @@ jobs:
         with:
           name: laravel-app
 
-      - name: Deploy to Azure VM
+      - name: Setup Server Dependencies
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 22
-          script_timeout: 10m
           script: |
-            # Create backup
-            TIMESTAMP=$(date +%Y%m%d%H%M%S)
-            sudo mkdir -p /var/backups/laravel
-            [ -d "${{ env.DEPLOY_PATH }}" ] && sudo mv "${{ env.DEPLOY_PATH }}" "/var/backups/laravel/backup-$TIMESTAMP"
-
-            # Create deployment directory
+            sudo apt update
+            sudo apt install -y software-properties-common
+            sudo add-apt-repository ppa:ondrej/php -y
+            sudo apt update
+            sudo apt install -y php8.2 php8.2-cli php8.2-fpm php8.2-mysql php8.2-mbstring php8.2-xml php8.2-zip php8.2-curl
             sudo mkdir -p ${{ env.DEPLOY_PATH }}
             sudo chown ${{ secrets.SSH_USERNAME }}:www-data ${{ env.DEPLOY_PATH }}
 
-            # Extract archive
-            tar -xzf laravel-app.tar.gz -C ${{ env.DEPLOY_PATH }}
-            rm laravel-app.tar.gz
+      - name: Deploy Application
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
             cd ${{ env.DEPLOY_PATH }}
+            tar -xzf ~/work/CICD_TUBES_S6/CICD_TUBES_S6/laravel-app.tar.gz -C .
 
-            # Environment setup
+            # Only copy .env if it doesn't exist
             [ ! -f .env ] && cp .env.example .env
-            php artisan key:generate
 
-            # Set permissions
+            composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
+
             sudo chmod -R 775 storage bootstrap/cache
             sudo chown -R ${{ secrets.SSH_USERNAME }}:www-data .
 
-            # Optimize
             php artisan config:cache
-            php artisan route:cache
             php artisan view:cache
+            php artisan route:cache
 
-            # Restart PHP-FPM
             sudo systemctl restart php8.2-fpm
-
-            echo "🚀 Deployment successful! App is live at ${{ env.DEPLOY_PATH }}"
+            echo "🚀 Deployment successful!"
