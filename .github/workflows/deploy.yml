@@ -18,6 +18,8 @@ jobs:
         ports:
           - 3306:3306
         options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
+        volumes:
+          - mysql-data:/var/lib/mysql
 
     steps:
       - uses: actions/checkout@v4
@@ -26,6 +28,7 @@ jobs:
         uses: actions/setup-node@v3
         with:
           node-version: "18"
+          cache: "npm"
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
@@ -34,11 +37,28 @@ jobs:
           extensions: mbstring, exif, pcntl, gd, pdo_mysql, zip
           ini-values: memory_limit=512M
           coverage: none
+          tools: composer:v2
+
+      - name: Cache Composer dependencies
+        uses: actions/cache@v3
+        with:
+          path: vendor
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
+
+      - name: Cache NPM dependencies
+        uses: actions/cache@v3
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-npm-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-
 
       - name: Install dependencies
         run: |
           composer install --no-progress --prefer-dist --optimize-autoloader
-          npm install
+          npm ci
           npm run build
           cp .env.example .env.testing
           echo "APP_KEY=$(php artisan key:generate --show --no-ansi)" >> .env.testing
@@ -66,7 +86,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Deploy Application using appleboy/ssh-action
+      - name: Install rsync
+        run: sudo apt-get update && sudo apt-get install -y rsync
+
+      - name: Deploy Application
         uses: appleboy/ssh-action@v0.1.7
         with:
           host: ${{ secrets.AZURE_HOST }}
@@ -74,25 +97,44 @@ jobs:
           password: ${{ secrets.AZURE_PASSWORD }}
           port: 22
           script: |
-            # Sync files (excluding node_modules and vendor)
-            rsync -azh --delete --exclude={'node_modules/','vendor/','.env','.git/'} ./ ~/laravel-app/
-            cd ~/laravel-app
-            # Copy production environment file if exists
-            [ -f .env.production ] && cp .env.production .env || true
+            set -e
+            cd ~/laravel-app || mkdir -p ~/laravel-app && cd ~/laravel-app
+
+            # Sync files (excluding development-only directories/files)
+            rsync -azh --delete --exclude={'node_modules/','vendor/','.git/','.github/','tests/','.env*'} $GITHUB_WORKSPACE/ ./
+
+            # Ensure production .env exists
+            if [ ! -f .env ]; then
+              if [ -f .env.production ]; then
+                cp .env.production .env
+              else
+                echo "Error: No .env or .env.production file found!" >&2
+                exit 1
+              fi
+            fi
+
             # Docker operations
-            docker compose down
+            docker compose down || true
             docker compose build --no-cache
             docker compose up -d
-            # Install dependencies inside container
-            docker exec laravel-app-prod bash -c "composer install --no-dev --optimize-autoloader"
+
+            # Wait for containers to be healthy
+            sleep 10
+
+            # Install production dependencies
+            docker exec laravel-app-prod bash -c "composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader"
             docker exec laravel-app-prod bash -c "npm install --production && npm run build"
+
             # Database and optimization
             docker exec laravel-app-prod bash -c "php artisan migrate --force"
             docker exec laravel-app-prod bash -c "php artisan optimize:clear"
+
             # Restart workers if using queues
             docker exec laravel-app-prod bash -c "php artisan queue:restart" || true
-          debug: true
 
       - name: Verify Deployment
         run: |
-          curl -sSf https://${{ secrets.AZURE_HOST }} > /dev/null || echo "Deployment verification failed"
+          if ! curl -sSf https://${{ secrets.AZURE_HOST }} > /dev/null; then
+            echo "::error::Deployment verification failed"
+            exit 1
+          fi
