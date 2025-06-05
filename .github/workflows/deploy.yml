@@ -1,56 +1,109 @@
-name: Laravel Production Deploy
+name: Deploy Laravel to Azure VM via SSH
 
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  APP_ENV: production
+  DEPLOY_PATH: /var/www/your-app-name
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install rsync
-        run: sudo apt-get update && sudo apt-get install -y rsync
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          extensions: mbstring, dom, fileinfo, mysql, sqlite, curl, gd, intl, bcmath, soap, zip
+          tools: composer:v2
+
+      - name: Install dependencies
+        run: |
+          composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
+          npm install
+          npm run build
+
+      - name: Generate artifact
+        run: |
+          rm -rf .git
+          rm -rf node_modules
+          php artisan config:clear
+          php artisan view:clear
+          php artisan route:clear
+          php artisan cache:clear
+          tar -czf ../laravel-app.tar.gz .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: laravel-app
+          path: ../laravel-app.tar.gz
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: laravel-app
 
       - name: Deploy via SSH
-        uses: appleboy/ssh-action@v0.1.7
+        uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           password: ${{ secrets.SSH_PASSWORD }}
           port: 22
           script: |
-            set -ex
-            echo "=== Starting Deployment ==="
+            # Stop services if running
+            sudo systemctl stop php-fpm || true
+            sudo systemctl stop nginx || true
 
-            # 1. Prepare directory
-            mkdir -p ~/laravel-app
-            cd ~/laravel-app
+            # Backup current deployment
+            TIMESTAMP=$(date +%Y%m%d%H%M%S)
+            sudo mv ${{ env.DEPLOY_PATH }} ${{ env.DEPLOY_PATH }}-backup-$TIMESTAMP || true
 
-            # 2. Sync files (exclude development files)
-            echo "Syncing files..."
-            rsync -az --delete \
-              --exclude=.git \
-              --exclude=node_modules \
-              --exclude=vendor \
-              --exclude=storage \
-              --exclude=bootstrap/cache \
-              --exclude=.env \
-              $GITHUB_WORKSPACE/ .
+            # Create new directory
+            sudo mkdir -p ${{ env.DEPLOY_PATH }}
+            sudo chown -R ${{ secrets.SSH_USERNAME }}:www-data ${{ env.DEPLOY_PATH }}
 
-            # 3. Set permissions
-            chmod -R 775 storage bootstrap/cache
+            # Extract artifact
+            tar -xzf laravel-app.tar.gz -C ${{ env.DEPLOY_PATH }}
+            rm laravel-app.tar.gz
 
-            # 4. Docker operations
-            echo "Starting containers..."
-            docker compose down || true
-            docker compose build --no-cache
-            docker compose up -d
+            # Install production dependencies (in case any were missed)
+            cd ${{ env.DEPLOY_PATH }}
+            composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
 
-            # 5. Install dependencies inside container
-            docker exec laravel-app composer install --no-interaction
-            docker exec laravel-app npm install --production
-            docker exec laravel-app npm run build
+            # Set up environment
+            if [ ! -f .env ]; then
+              cp .env.example .env
+              php artisan key:generate
+            fi
 
-            echo "=== Deployment Successful ==="
+            # Set permissions
+            sudo chmod -R 775 storage
+            sudo chmod -R 775 bootstrap/cache
+            sudo chown -R ${{ secrets.SSH_USERNAME }}:www-data .
+
+            # Run migrations (optional - consider doing this manually in production)
+            php artisan migrate --force || true
+
+            # Optimize application
+            php artisan config:cache
+            php artisan route:cache
+            php artisan view:cache
+
+            # Restart services
+            sudo systemctl start php-fpm
+            sudo systemctl start nginx
