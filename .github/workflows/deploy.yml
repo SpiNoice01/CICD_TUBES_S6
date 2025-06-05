@@ -64,7 +64,7 @@ jobs:
           username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           source: ${{ github.workspace }}/laravel-app.tar.gz
-          target: ${{ env.DEPLOY_PATH }}/laravel-app.tar.gz
+          target: /var/www/laravel-app/laravel-app.tar.gz # Ensure this is a file path
 
       - name: Execute remote commands
         uses: appleboy/ssh-action@v1
@@ -77,16 +77,16 @@ jobs:
             echo "=== Starting Deployment ==="
 
             # 1. Prepare directory
-            sudo mkdir -p ${{ env.DEPLOY_PATH }}
-            sudo chown -R ${{ secrets.SSH_USERNAME }}:www-data ${{ env.DEPLOY_PATH }}
+            sudo mkdir -p /var/www/laravel-app
+            sudo chown -R ${{ secrets.SSH_USERNAME }}:www-data /var/www/laravel-app
 
             # 2. Extract the deployment package
-            echo "Transferring deployment package..."
-            tar -xzf ${{ env.DEPLOY_PATH }}/laravel-app.tar.gz -C ${{ env.DEPLOY_PATH }}
+            echo "Extracting deployment package..."
+            tar -xzf /var/www/laravel-app/laravel-app.tar.gz -C /var/www/laravel-app
 
             # 3. Install dependencies
             echo "Installing dependencies..."
-            cd ${{ env.DEPLOY_PATH }}
+            cd /var/www/laravel-app
             sudo -u www-data composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
 
             # 4. Setup environment
@@ -105,7 +105,7 @@ jobs:
             server {
                 listen 80;
                 server_name _;
-                root ${{ env.DEPLOY_PATH }}/public;
+                root /var/www/laravel-app/public;
                 index index.php;
                 location / {
                     try_files \$uri \$uri/ /index.php?\$query_string;
