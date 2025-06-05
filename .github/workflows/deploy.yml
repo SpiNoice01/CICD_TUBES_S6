@@ -54,10 +54,11 @@ jobs:
           name: laravel-app
           path: ${{ github.workspace }}
 
-      - name: Verify downloaded artifact
+      - name: Verify artifact
         run: |
           ls -lh ${{ github.workspace }}
           file ${{ github.workspace }}/laravel-app.tar.gz
+          tar -tzf ${{ github.workspace }}/laravel-app.tar.gz | head
 
       - name: Deploy to Server
         uses: appleboy/scp-action@master
@@ -66,9 +67,22 @@ jobs:
           username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           source: "${{ github.workspace }}/laravel-app.tar.gz"
-          target: "/tmp/laravel-deploy.tar.gz" # Changed to temp location
+          target: "/tmp/laravel-deploy.tar.gz"
+          rm: true
 
-      - name: Execute remote commands
+      - name: Prepare Server Directory
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            sudo mkdir -p ${{ env.DEPLOY_PATH }}
+            sudo chown -R ${{ secrets.SSH_USERNAME }}:www-data ${{ env.DEPLOY_PATH }}
+            sudo chmod 775 ${{ env.DEPLOY_PATH }}
+            ls -ld ${{ env.DEPLOY_PATH }}
+
+      - name: Execute Deployment
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -78,31 +92,37 @@ jobs:
             set -e
             echo "=== Starting Deployment ==="
 
-            # 1. Prepare directory
-            sudo mkdir -p ${{ env.DEPLOY_PATH }}
-            sudo chown -R ${{ secrets.SSH_USERNAME }}:www-data ${{ env.DEPLOY_PATH }}
+            # Verify the archive
+            echo "Verifying package..."
+            ls -lh /tmp/laravel-deploy.tar.gz
+            file /tmp/laravel-deploy.tar.gz
 
-            # 2. Move and extract the deployment package
-            echo "Extracting deployment package..."
-            sudo mv /tmp/laravel-deploy.tar.gz ${{ env.DEPLOY_PATH }}/
-            cd ${{ env.DEPLOY_PATH }} && tar -xzf laravel-deploy.tar.gz --strip-components=1
-            rm laravel-deploy.tar.gz
+            # Clean target directory
+            echo "Cleaning target..."
+            sudo rm -rf ${{ env.DEPLOY_PATH }}/*
 
-            # 3. Install dependencies
+            # Extract package
+            echo "Extracting package..."
+            sudo -u ${{ secrets.SSH_USERNAME }} tar -xzf /tmp/laravel-deploy.tar.gz -C ${{ env.DEPLOY_PATH }} --strip-components=1
+            sudo rm -f /tmp/laravel-deploy.tar.gz
+
+            # Install dependencies
             echo "Installing dependencies..."
+            cd ${{ env.DEPLOY_PATH }}
             composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
 
-            # 4. Setup environment
+            # Environment setup
             echo "Configuring environment..."
-            [ ! -f .env ] && sudo cp .env.example .env && sudo chown www-data:www-data .env
+            [ ! -f .env ] && sudo cp .env.example .env
+            sudo chown www-data:www-data .env
             php artisan key:generate
 
-            # 5. Set permissions
+            # Permissions
             echo "Setting permissions..."
             sudo chmod -R 775 storage bootstrap/cache
             sudo chown -R www-data:www-data storage bootstrap/cache
 
-            # 6. Configure Nginx
+            # Nginx configuration
             echo "Configuring Nginx..."
             sudo bash -c 'cat > /etc/nginx/sites-available/laravel <<EOF
             server {
@@ -122,7 +142,7 @@ jobs:
             sudo ln -sf /etc/nginx/sites-available/laravel /etc/nginx/sites-enabled/
             sudo rm -f /etc/nginx/sites-enabled/default
 
-            # 7. Restart services
+            # Restart services
             echo "Restarting services..."
             sudo systemctl restart php${{ env.PHP_VERSION }}-fpm nginx
 
