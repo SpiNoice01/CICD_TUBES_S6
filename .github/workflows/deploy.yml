@@ -24,25 +24,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Deploy via SSH (Password Auth)
+      - name: Deploy via SSH
         uses: appleboy/ssh-action@v0.1.7
         with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USERNAME }}
-          password: ${{ secrets.SSH_PASSWORD }} # Plaintext password
-          port: 22
           script: |
-            echo "=== Homework Deployment Start ==="
-
-            # 1. Sync files (exclude unnecessary folders)
-            rsync -az --delete \
-              --exclude=.git \
-              --exclude=node_modules \
-              --exclude=vendor \
-              $GITHUB_WORKSPACE/ ~/laravel-app/
-
-            # 2. Start containers
+            echo "=== Clean Deployment ==="
+            mkdir -p ~/laravel-app
             cd ~/laravel-app
-            docker compose up -d --build
 
-            echo "=== Deployment Complete! ==="
+            # Precise rsync with strict path and exclusions
+            rsync -az --delete --copy-links \
+              --exclude=/.git \
+              --exclude=/node_modules \
+              --exclude=/vendor \
+              --exclude=/storage \
+              --exclude=/bootstrap/cache \
+              --exclude=/docker \
+              --exclude=/.env \
+              --exclude=/.github \
+              --exclude=/tests \
+              $GITHUB_WORKSPACE/ .
+
+            echo "=== Starting Containers ==="
+            docker compose up -d --build --remove-orphans
