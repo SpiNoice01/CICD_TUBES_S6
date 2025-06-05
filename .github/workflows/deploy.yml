@@ -1,14 +1,13 @@
-name: Deploy Laravel to Azure VM via SSH
+name: Deploy Laravel to Azure VM
 
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 env:
-  APP_ENV: production
-  DEPLOY_PATH: /var/www/your-app-name
+  DEPLOY_PATH: /var/www/laravel-app
+  PHP_VERSION: "8.2"
 
 jobs:
   build:
@@ -17,10 +16,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up PHP
+      - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: "8.2"
+          php-version: ${{ env.PHP_VERSION }}
           extensions: mbstring, dom, fileinfo, mysql, sqlite, curl, gd, intl, bcmath, soap, zip
           tools: composer:v2
 
@@ -30,14 +29,12 @@ jobs:
           npm install
           npm run build
 
-      - name: Generate artifact
+      - name: Prepare deployment package
         run: |
-          rm -rf .git
-          rm -rf node_modules
+          rm -rf .git .github node_modules
           php artisan config:clear
           php artisan view:clear
           php artisan route:clear
-          php artisan cache:clear
           tar -czf ../laravel-app.tar.gz .
 
       - name: Upload artifact
@@ -56,54 +53,49 @@ jobs:
         with:
           name: laravel-app
 
-      - name: Deploy via SSH
+      - name: Deploy to Azure VM
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          password: ${{ secrets.SSH_PASSWORD }}
           port: 22
           script: |
-            # Stop services if running
-            sudo systemctl stop php-fpm || true
-            sudo systemctl stop nginx || true
-
-            # Backup current deployment
+            # Create backup of current deployment
             TIMESTAMP=$(date +%Y%m%d%H%M%S)
-            sudo mv ${{ env.DEPLOY_PATH }} ${{ env.DEPLOY_PATH }}-backup-$TIMESTAMP || true
+            sudo mkdir -p /var/backups/laravel
+            [ -d "${{ env.DEPLOY_PATH }}" ] && sudo mv "${{ env.DEPLOY_PATH }}" "/var/backups/laravel/backup-$TIMESTAMP"
 
-            # Create new directory
+            # Create deployment directory
             sudo mkdir -p ${{ env.DEPLOY_PATH }}
-            sudo chown -R ${{ secrets.SSH_USERNAME }}:www-data ${{ env.DEPLOY_PATH }}
+            sudo chown ${{ secrets.SSH_USERNAME }}:www-data ${{ env.DEPLOY_PATH }}
+            sudo chmod 775 ${{ env.DEPLOY_PATH }}
 
-            # Extract artifact
+            # Extract new release
             tar -xzf laravel-app.tar.gz -C ${{ env.DEPLOY_PATH }}
             rm laravel-app.tar.gz
 
-            # Install production dependencies (in case any were missed)
+            # Install production dependencies
             cd ${{ env.DEPLOY_PATH }}
             composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
 
-            # Set up environment
-            if [ ! -f .env ]; then
-              cp .env.example .env
-              php artisan key:generate
-            fi
+            # Setup environment
+            [ ! -f .env ] && cp .env.example .env
+            php artisan key:generate
 
             # Set permissions
-            sudo chmod -R 775 storage
-            sudo chmod -R 775 bootstrap/cache
+            sudo chmod -R 775 storage bootstrap/cache
             sudo chown -R ${{ secrets.SSH_USERNAME }}:www-data .
 
-            # Run migrations (optional - consider doing this manually in production)
-            php artisan migrate --force || true
+            # Database migrations (uncomment for production)
+            # php artisan migrate --force
 
             # Optimize application
             php artisan config:cache
             php artisan route:cache
             php artisan view:cache
 
-            # Restart services
-            sudo systemctl start php-fpm
-            sudo systemctl start nginx
+            # Restart PHP-FPM
+            sudo systemctl restart php8.2-fpm
+
+            echo "Deployment completed successfully!"
