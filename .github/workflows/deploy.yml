@@ -20,6 +20,7 @@ jobs:
         with:
           php-version: ${{ env.PHP_VERSION }}
           extensions: mbstring, dom, fileinfo, mysql, sqlite, curl, gd, intl, bcmath, soap, zip
+          tools: composer:v2
 
       - name: Install dependencies
         run: |
@@ -30,7 +31,12 @@ jobs:
       - name: Create deployment package
         run: |
           mkdir -p deployment_build
-          rsync -a --exclude='.git' --exclude='.github' --exclude='node_modules' ./ deployment_build/
+          rsync -a \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='node_modules' \
+            --exclude='storage/*' \
+            ./ deployment_build/
           cd deployment_build && tar -czf ../laravel-app.tar.gz .
           ls -lh ../laravel-app.tar.gz
 
@@ -49,8 +55,9 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: laravel-app
+          path: ${{ github.workspace }}/deploy-artifact
 
-      - name: Setup Server Dependencies
+      - name: Install Server Dependencies
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -58,12 +65,9 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             sudo apt update
-            sudo apt install -y software-properties-common
-            sudo add-apt-repository ppa:ondrej/php -y
-            sudo apt update
-            sudo apt install -y php8.2 php8.2-cli php8.2-fpm php8.2-mysql php8.2-mbstring php8.2-xml php8.2-zip php8.2-curl
+            sudo apt install -y composer php-cli unzip
             sudo mkdir -p ${{ env.DEPLOY_PATH }}
-            sudo chown ${{ secrets.SSH_USERNAME }}:www-data ${{ env.DEPLOY_PATH }}
+            sudo chown -R ${{ secrets.SSH_USERNAME }}:www-data ${{ env.DEPLOY_PATH }}
 
       - name: Deploy Application
         uses: appleboy/ssh-action@v1
@@ -72,20 +76,31 @@ jobs:
           username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
+            set -e # Exit immediately on error
+
+            # Clear existing deployment
+            sudo rm -rf ${{ env.DEPLOY_PATH }}/*
+
+            # Extract artifact
+            tar -xzf ${{ github.workspace }}/deploy-artifact/laravel-app.tar.gz -C ${{ env.DEPLOY_PATH }}
+
+            # Install composer dependencies
             cd ${{ env.DEPLOY_PATH }}
-            tar -xzf ~/work/CICD_TUBES_S6/CICD_TUBES_S6/laravel-app.tar.gz -C .
-
-            # Only copy .env if it doesn't exist
-            [ ! -f .env ] && cp .env.example .env
-
             composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
 
-            sudo chmod -R 775 storage bootstrap/cache
-            sudo chown -R ${{ secrets.SSH_USERNAME }}:www-data .
+            # Setup environment
+            if [ ! -f .env ]; then
+              cp .env.example .env
+              php artisan key:generate
+            fi
 
+            # Set permissions
+            sudo chmod -R 775 storage bootstrap/cache
+            sudo chown -R www-data:www-data storage bootstrap/cache
+
+            # Optimize
             php artisan config:cache
             php artisan view:cache
             php artisan route:cache
 
-            sudo systemctl restart php8.2-fpm
-            echo "🚀 Deployment successful!"
+            echo "✅ Deployment verified successfully"
