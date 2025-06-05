@@ -6,7 +6,7 @@ on:
 
 env:
   DEPLOY_PATH: /var/www/laravel-app
-  PHP_VERSION: "8.2"
+  PHP_VERSION: "8.4" # Changed to match your installed version
 
 jobs:
   build:
@@ -34,6 +34,7 @@ jobs:
             --exclude='.github' \
             --exclude='node_modules' \
             --exclude='storage/*' \
+            --exclude='.env' \
             ./ deployment_build/
           cd deployment_build && tar -czf ../laravel-app.tar.gz .
           ls -lh ../laravel-app.tar.gz
@@ -58,7 +59,6 @@ jobs:
         run: |
           ls -lh ${{ github.workspace }}
           file ${{ github.workspace }}/laravel-app.tar.gz
-          tar -tzf ${{ github.workspace }}/laravel-app.tar.gz | head
 
       - name: Deploy to Server
         uses: appleboy/scp-action@master
@@ -70,18 +70,6 @@ jobs:
           target: "/tmp/laravel-deploy.tar.gz"
           rm: true
 
-      - name: Prepare Server Directory
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USERNAME }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            sudo mkdir -p ${{ env.DEPLOY_PATH }}
-            sudo chown -R ${{ secrets.SSH_USERNAME }}:www-data ${{ env.DEPLOY_PATH }}
-            sudo chmod 775 ${{ env.DEPLOY_PATH }}
-            ls -ld ${{ env.DEPLOY_PATH }}
-
       - name: Execute Deployment
         uses: appleboy/ssh-action@v1
         with:
@@ -92,37 +80,41 @@ jobs:
             set -e
             echo "=== Starting Deployment ==="
 
-            # Verify the archive
+            # 1. Verify package
             echo "Verifying package..."
             ls -lh /tmp/laravel-deploy.tar.gz
-            file /tmp/laravel-deploy.tar.gz
+            file /tmp/laravel-deploy.tar.gz | grep "gzip compressed data"
 
-            # Clean target directory
-            echo "Cleaning target..."
-            sudo rm -rf ${{ env.DEPLOY_PATH }}/*
+            # 2. Prepare directory
+            echo "Preparing directory..."
+            sudo mkdir -p ${{ env.DEPLOY_PATH }}
+            sudo chown -R ${{ secrets.SSH_USERNAME }}:www-data ${{ env.DEPLOY_PATH }}
+            sudo chmod 775 ${{ env.DEPLOY_PATH }}
 
-            # Extract package
+            # 3. Extract package
             echo "Extracting package..."
             sudo -u ${{ secrets.SSH_USERNAME }} tar -xzf /tmp/laravel-deploy.tar.gz -C ${{ env.DEPLOY_PATH }} --strip-components=1
             sudo rm -f /tmp/laravel-deploy.tar.gz
 
-            # Install dependencies
+            # 4. Install dependencies
             echo "Installing dependencies..."
             cd ${{ env.DEPLOY_PATH }}
-            composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
+            sudo -u ${{ secrets.SSH_USERNAME }} composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
 
-            # Environment setup
+            # 5. Environment setup
             echo "Configuring environment..."
-            [ ! -f .env ] && sudo cp .env.example .env
-            sudo chown www-data:www-data .env
-            php artisan key:generate
+            if [ ! -f .env ]; then
+              sudo cp .env.example .env
+              sudo chown www-data:www-data .env
+              sudo -u www-data php artisan key:generate
+            fi
 
-            # Permissions
+            # 6. Permissions
             echo "Setting permissions..."
             sudo chmod -R 775 storage bootstrap/cache
             sudo chown -R www-data:www-data storage bootstrap/cache
 
-            # Nginx configuration
+            # 7. Configure Nginx
             echo "Configuring Nginx..."
             sudo bash -c 'cat > /etc/nginx/sites-available/laravel <<EOF
             server {
@@ -142,9 +134,10 @@ jobs:
             sudo ln -sf /etc/nginx/sites-available/laravel /etc/nginx/sites-enabled/
             sudo rm -f /etc/nginx/sites-enabled/default
 
-            # Restart services
+            # 8. Restart services
             echo "Restarting services..."
-            sudo systemctl restart php${{ env.PHP_VERSION }}-fpm nginx
+            sudo systemctl restart php${{ env.PHP_VERSION }}-fpm
+            sudo systemctl restart nginx
 
             echo "=== Deployment Successful ==="
             echo "Access your site at: http://$(curl -s ifconfig.me)"
