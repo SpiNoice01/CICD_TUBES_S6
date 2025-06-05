@@ -2,7 +2,7 @@ name: Laravel Production Deploy
 
 on:
   push:
-    branches: ["main"]
+    branches: [main]
 
 jobs:
   deploy:
@@ -13,7 +13,7 @@ jobs:
       - name: Install rsync
         run: sudo apt-get update && sudo apt-get install -y rsync
 
-      - name: Deploy to Production
+      - name: Deploy via SSH
         uses: appleboy/ssh-action@v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -24,21 +24,12 @@ jobs:
             set -ex
             echo "=== Starting Deployment ==="
 
-            # 1. Disk space check
-            echo "--- Disk Space Status ---"
-            df -h
-            if [ $(df --output=pcent / | tail -1 | tr -dc '0-9') -gt 90 ]; then
-              echo "::error::Aborting: Disk space over 90% used"
-              exit 1
-            fi
+            # 1. Prepare directory
+            mkdir -p ~/laravel-app
+            cd ~/laravel-app
 
-            # 2. Prepare directory structure
-            echo "--- Preparing Directory ---"
-            mkdir -p ~/laravel-app-new
-            cd ~/laravel-app-new
-
-            # 3. Sync only necessary files (from GitHub workspace root)
-            echo "--- Syncing Files ---"
+            # 2. Sync files (exclude development files)
+            echo "Syncing files..."
             rsync -az --delete \
               --exclude=.git \
               --exclude=node_modules \
@@ -46,32 +37,20 @@ jobs:
               --exclude=storage \
               --exclude=bootstrap/cache \
               --exclude=.env \
-              --exclude=docker \
               $GITHUB_WORKSPACE/ .
 
-            # 4. Set proper permissions
-            echo "--- Setting Permissions ---"
-            chmod -R 755 storage
-            chmod -R 755 bootstrap/cache
+            # 3. Set permissions
+            chmod -R 775 storage bootstrap/cache
 
-            # 5. Docker operations
-            echo "--- Starting Containers ---"
+            # 4. Docker operations
+            echo "Starting containers..."
             docker compose down || true
             docker compose build --no-cache
             docker compose up -d
 
-            # 6. Atomic switch
-            echo "--- Finalizing Deployment ---"
-            cd ~
-            rm -rf ~/laravel-app-old
-            mv ~/laravel-app ~/laravel-app-old || true
-            mv ~/laravel-app-new ~/laravel-app
-
-            # 7. Cleanup
-            echo "--- Cleaning Up ---"
-            docker system prune -f || true
-            rm -rf ~/laravel-app-old || true
+            # 5. Install dependencies inside container
+            docker exec laravel-app composer install --no-interaction
+            docker exec laravel-app npm install --production
+            docker exec laravel-app npm run build
 
             echo "=== Deployment Successful ==="
-            echo "--- Final Disk Usage ---"
-            df -h
