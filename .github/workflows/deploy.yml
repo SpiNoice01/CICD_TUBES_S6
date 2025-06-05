@@ -75,7 +75,7 @@ jobs:
 
             # 2. Transfer file directly via SSH action
             echo "Transferring deployment package..."
-            tar -xzf laravel-app.tar.gz -C ${{ env.DEPLOY_PATH }}
+            tar -xzf ${{ github.workspace }}/laravel-app.tar.gz -C ${{ env.DEPLOY_PATH }}
 
             # 3. Install dependencies
             echo "Installing dependencies..."
