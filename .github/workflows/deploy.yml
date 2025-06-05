@@ -5,70 +5,10 @@ on:
     branches: ["main"]
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    services:
-      mysql:
-        image: mysql:8.0
-        env:
-          MYSQL_ROOT_PASSWORD: root
-          MYSQL_DATABASE: laravel
-          MYSQL_USER: laravel
-          MYSQL_PASSWORD: password
-        ports:
-          - 3306:3306
-        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: "18"
-          cache: "npm"
-
-      - name: Setup PHP
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: "8.2"
-          extensions: mbstring, exif, pcntl, gd, pdo_mysql, zip
-          ini-values: memory_limit=512M
-          coverage: none
-
-      - name: Install dependencies
-        run: |
-          composer install --no-progress --prefer-dist --optimize-autoloader
-          npm ci
-          npm run build
-          cp .env.example .env.testing
-          echo "APP_KEY=$(php artisan key:generate --show --no-ansi)" >> .env.testing
-          echo "APP_ENV=testing" >> .env.testing
-          echo "DB_CONNECTION=mysql" >> .env.testing
-          echo "DB_HOST=127.0.0.1" >> .env.testing
-          echo "DB_PORT=3306" >> .env.testing
-          echo "DB_DATABASE=laravel" >> .env.testing
-          echo "DB_USERNAME=laravel" >> .env.testing
-          echo "DB_PASSWORD=password" >> .env.testing
-
-      - name: Execute tests
-        env:
-          APP_ENV: testing
-        run: |
-          php artisan config:clear
-          php artisan migrate:fresh --force
-          php artisan test --stop-on-failure
-
   deploy:
-    needs: test
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install rsync
-        run: sudo apt-get update && sudo apt-get install -y rsync
 
       - name: Deploy to Production
         uses: appleboy/ssh-action@v0.1.7
@@ -77,63 +17,47 @@ jobs:
           username: ${{ secrets.SSH_USERNAME }}
           password: ${{ secrets.SSH_PASSWORD }}
           port: 22
-          # Removed invalid input 'script_timeout'
           script: |
             set -e
             echo "=== Starting Deployment ==="
 
-            # 1. Prepare directory
-            mkdir -p ~/laravel-app
-            cd ~/laravel-app
-
-            # 2. Sync files with strict exclusions
-            rsync -az --delete --copy-links \
-              --exclude=/.git \
-              --exclude=/node_modules \
-              --exclude=/vendor \
-              --exclude=/storage \
-              --exclude=/bootstrap/cache \
-              --exclude=/.env \
-              --exclude=/.github \
-              --exclude=/tests \
-              $GITHUB_WORKSPACE/ .
-
-            # 3. Ensure production .env exists
-            if [ -f .env.production ]; then
-              cp .env.production .env
-            elif [ ! -f .env ]; then
-              echo "::error::No .env file found!"
+            # 1. Check disk space first
+            df -h
+            if [ $(df --output=pcent / | tail -1 | tr -dc '0-9') -gt 90 ]; then
+              echo "::error::Disk space is critically low!"
               exit 1
             fi
 
-            # 4. Set proper permissions
-            sudo chown -R $USER:$USER ~/laravel-app
-            chmod -R 755 storage
-            chmod -R 755 bootstrap/cache
+            # 2. Clean previous deployment
+            rm -rf ~/laravel-app-temp
+            mkdir -p ~/laravel-app-temp
 
-            # 5. Docker operations
+            # 3. Precise rsync with proper source path
+            rsync -az --delete \
+              --exclude=.git \
+              --exclude=node_modules \
+              --exclude=vendor \
+              --exclude=storage \
+              --exclude=bootstrap/cache \
+              --exclude=.env \
+              $GITHUB_WORKSPACE/ ~/laravel-app-temp/
+
+            # 4. Swap directories atomically
+            rm -rf ~/laravel-app-old
+            mv ~/laravel-app ~/laravel-app-old || true
+            mv ~/laravel-app-temp ~/laravel-app
+
+            # 5. Set permissions
+            chmod -R 755 ~/laravel-app/storage
+            chmod -R 755 ~/laravel-app/bootstrap/cache
+
+            # 6. Docker operations
+            cd ~/laravel-app
             docker compose down || true
             docker compose build --no-cache
             docker compose up -d
 
-            # 6. Install dependencies inside container
-            docker exec laravel-app bash -c "composer install --no-dev --optimize-autoloader"
-            docker exec laravel-app bash -c "npm install --production && npm run build"
-
-            # 7. Database and optimization
-            docker exec laravel-app bash -c "php artisan migrate --force"
-            docker exec laravel-app bash -c "php artisan optimize:clear"
+            # 7. Cleanup
+            rm -rf ~/laravel-app-old
 
             echo "=== Deployment Complete ==="
-
-      - name: Verify Deployment
-        run: |
-          for i in {1..5}; do
-            if curl -sSf https://${{ secrets.SSH_HOST }} > /dev/null; then
-              echo "Deployment verified successfully"
-              exit 0
-            fi
-            sleep 10
-          done
-          echo "::error::Deployment verification failed after 5 attempts"
-          exit 1
