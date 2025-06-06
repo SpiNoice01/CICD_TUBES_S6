@@ -1,4 +1,4 @@
-name: Laravel CI/CD + SSH Deploy
+name: Deploy Laravel to Azure VM
 
 on:
   push:
@@ -9,67 +9,64 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      - name: Setup PHP
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: "8.2"
-          extensions: mbstring, bcmath, intl, zip, xml
-          tools: composer
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: "18"
-
-      - name: Cache Composer Dependencies
-        uses: actions/cache@v3
-        with:
-          path: vendor
-          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
-          restore-keys: ${{ runner.os }}-composer-
-
-      - name: Install Composer Dependencies
-        run: composer install --no-interaction --prefer-dist --optimize-autoloader
-
-      - name: Cache Node Modules
-        uses: actions/cache@v3
-        with:
-          path: node_modules
-          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: ${{ runner.os }}-node-
-
-      - name: Install NPM Dependencies
-        run: npm install
-
-      - name: Build Assets
-        run: npm run build
-
-      - name: Set Laravel Permissions
-        run: chmod -R 755 storage bootstrap/cache
-
-      - name: Run Laravel Commands
+      - name: Setup SSH
+        shell: bash
         run: |
-          cp .env.example .env
-          php artisan key:generate
-          php artisan config:cache
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          echo "Host *" > ~/.ssh/config
+          echo "  StrictHostKeyChecking no" >> ~/.ssh/config
 
-      # === DEPLOY VIA SSH ===
-      - name: Deploy to Server via SSH
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USERNAME }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          password: ${{ secrets.SSH_PASSWORD }}
-          port: 22
-          script: |
-            cd /path/to/your/project
-            git pull origin main
-            composer install --no-interaction --prefer-dist --optimize-autoloader
-            npm install && npm run build
+      - name: Deploy Application via rsync
+        shell: bash
+        run: |
+          rsync -avz --no-perms --no-owner --no-group --delete \
+            -e "ssh -o StrictHostKeyChecking=no" \
+            --exclude='.git' \
+            --exclude='.env' \
+            --exclude='storage/*' \
+            --exclude='node_modules' \
+            ./ ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/
+
+      - name: Remote Setup & Deploy
+        shell: bash
+        run: |
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
+            set -e
+
+            cd ~/laravel-app
+
+            echo "🔧 Fixing permissions..."
+            sudo chown -R $USER:www-data storage bootstrap/cache
+            sudo chmod -R 775 storage bootstrap/cache
+
+            echo "🌱 Setting up environment..."
+            if [ ! -f .env ]; then
+              cp .env.example .env
+              php artisan key:generate
+            fi
+
+            echo "📦 Installing PHP dependencies..."
+            composer install --no-dev --optimize-autoloader --ignore-platform-reqs
+
+            echo "📦 Installing Node.js dependencies..."
+            npm install --omit=dev
+            npm run build
+
+            echo "🗃️ Migrating database..."
+            php artisan cache:table || true
+            php artisan session:table || true
             php artisan migrate --force
-            php artisan config:cache
-            php artisan route:cache
+
+            echo "🧹 Clearing caches..."
+            php artisan config:clear
+            php artisan cache:clear
+            php artisan view:clear
+
+            echo "♻️ Restarting services..."
+            sudo systemctl restart nginx
+            sudo systemctl restart php8.4-fpm
+          EOF
