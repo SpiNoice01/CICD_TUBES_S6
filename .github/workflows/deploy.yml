@@ -67,11 +67,6 @@ jobs:
             sudo chmod +x /usr/local/bin/composer
             composer install --no-dev --optimize-autoloader --ignore-platform-reqs
 
-            echo "🧱 Building assets..."
-            npm install
-            npm run build
-
-
             echo "🗃️ Migrating database..."
             php artisan cache:table || true
             php artisan session:table || true
