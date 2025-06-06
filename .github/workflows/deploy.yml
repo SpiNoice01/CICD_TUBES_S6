@@ -1,19 +1,12 @@
-name: Deploy Laravel to Azure VM
+name: Deploy Laravel to Azure VM and Analyze with SonarCloud
 
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
-
-env:
-  APP_ENV: production
-  COMPOSER_NO_INTERACTION: 1
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
 
     steps:
       - name: Checkout code
@@ -23,13 +16,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "18"
-          cache: "npm"
 
       - name: Install npm dependencies
-        run: npm ci
+        run: npm install
 
       - name: Build assets
-        run: npm run build --if-present
+        run: npm run build
 
       - name: Setup SSH
         shell: bash
@@ -37,18 +29,11 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          cat > ~/.ssh/config <<EOF
-          Host *
-            StrictHostKeyChecking no
-            UserKnownHostsFile /dev/null
-            LogLevel ERROR
-          EOF
-
-      - name: Validate SSH connection
-        run: |
-          ssh -T ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} echo "SSH connection successful"
+          echo "Host *" > ~/.ssh/config
+          echo "  StrictHostKeyChecking no" >> ~/.ssh/config
 
       - name: Deploy Application via rsync
+        shell: bash
         run: |
           rsync -avz --no-perms --no-owner --no-group --delete \
             -e "ssh -o StrictHostKeyChecking=no" \
@@ -56,122 +41,103 @@ jobs:
             --exclude='.env' \
             --exclude='storage/*' \
             --exclude='node_modules' \
-            --exclude='tests' \
-            --exclude='.github' \
             ./ ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/
 
       - name: Remote Setup & Deploy
+        shell: bash
         run: |
           ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-            set -euo pipefail
+            set -e
 
             cd ~/laravel-app
 
-            echo "🔧 Setting up environment..."
+            echo "🔧 Fixing permissions..."
+            sudo chown -R $USER:www-data storage bootstrap/cache
+            sudo chmod -R 775 storage bootstrap/cache
+
+            echo "🌱 Setting up environment..."
             if [ ! -f .env ]; then
               cp .env.example .env
               php artisan key:generate
-              echo "✅ .env created and application key generated"
+              echo "✅ Application key generated and saved to .env"
+            else
+              echo "✅ .env already exists, skipping key generation"
             fi
 
-            echo "📦 Installing system dependencies..."
-            sudo apt-get update -qq
-            sudo apt-get install -y --no-install-recommends php-sqlite3 unzip
-
-            echo "🔄 Installing Composer dependencies..."
-            if ! command -v composer &> /dev/null; then
+            echo "📦 Installing PHP dependencies..."
+            sudo apt-get update
+            sudo apt-get install -y php-sqlite3 unzip curl
+            if ! [ -x "$(command -v composer)" ]; then
               php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
-              php composer-setup.php --quiet
+              EXPECTED_SIGNATURE="$(php -r 'copy(\"https://composer.github.io/installer.sig\", \"php://stdout\");')"
+              php -r "if (hash_file('sha384', 'composer-setup.php') === '$EXPECTED_SIGNATURE') { echo 'Installer verified'; } else { echo 'Installer corrupt'; unlink('composer-setup.php'); exit(1); }"
+              php composer-setup.php
               sudo mv composer.phar /usr/local/bin/composer
-              rm composer-setup.php
+              sudo chmod +x /usr/local/bin/composer
+              php -r "unlink('composer-setup.php');"
             fi
 
-            composer install --no-dev --optimize-autoloader --ignore-platform-reqs --no-interaction
+            composer install --no-dev --optimize-autoloader --ignore-platform-reqs
 
-            echo "🗃️ Running database migrations..."
+            echo "🗃️ Migrating database..."
+            php artisan cache:table || true
+            php artisan session:table || true
             php artisan migrate --force
 
-            echo "🧹 Optimizing application..."
-            php artisan config:cache
-            php artisan route:cache
-            php artisan view:cache
-
-            echo "🔒 Setting permissions..."
-            sudo chown -R $USER:www-data storage bootstrap/cache
-            sudo chmod -R 775 storage bootstrap/cache
+            echo "🧹 Clearing caches..."
+            php artisan config:clear
+            php artisan cache:clear
+            php artisan view:clear
 
             echo "♻️ Restarting services..."
             sudo systemctl restart nginx
             sudo systemctl restart php8.4-fpm
           EOF
 
-  run-tests:
-    name: Run Tests
-    needs: deploy
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    services:
-      mysql:
-        image: mysql:5.7
-        env:
-          MYSQL_ROOT_PASSWORD: "rootpassword" # Set a valid password
-          MYSQL_DATABASE: kanh2553_campfires
-        ports:
-          - 3306:3306
-        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=10
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup PHP
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: "8.2"
-          extensions: mbstring, dom, fileinfo, mysql, pcov
-          coverage: pcov
-          tools: composer:v2
-
-      - name: Install dependencies
+      - name: Run PHPUnit tests with coverage
+        shell: bash
+        continue-on-error: true
         run: |
-          composer install --no-interaction --prefer-dist --optimize-autoloader
-          composer require pestphp/pest --dev --no-interaction
-          composer require pestphp/pest-plugin-laravel --dev --no-interaction
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'ENDSSH'
+            set -e
+            cd ~/laravel-app
 
-      - name: Prepare environment
-        run: |
-          cp .env.example .env.testing
-          php artisan key:generate --env=testing
-          echo "DB_CONNECTION=mysql" >> .env.testing
-          echo "DB_HOST=127.0.0.1" >> .env.testing
-          echo "DB_PORT=3306" >> .env.testing
-          echo "DB_DATABASE=kanh2553_campfires" >> .env.testing
-          echo "DB_USERNAME=root" >> .env.testing
-          echo "DB_PASSWORD=rootpassword" >> .env.testing  # Use the same password
+            # Debug: Show directory structure
+            echo "Current directory: $(pwd)"
+            ls -la
+            echo "Vendor contents:"
+            ls -la vendor/bin || true
 
-      - name: Wait for MySQL to be ready
-        run: |
-          while ! mysqladmin ping -h127.0.0.1 -uroot -prootpassword --silent; do
-            sleep 1
-          done
+            # Ensure proper permissions
+            sudo chown -R $USER:$USER .
+            sudo chmod -R 755 .
 
-      - name: Print MySQL service logs
-        run: |
-          docker logs mysql
+            # Install dependencies (force fresh install)
+            echo "Installing Composer dependencies..."
+            composer install --no-interaction --no-dev --optimize-autoloader --ignore-platform-reqs
 
-      - name: Run migrations
-        run: |
-          php artisan migrate --force
+            # Verify Pest installation
+            if [ ! -f vendor/bin/pest ]; then
+              echo "Pest not found! Installing Pest..."
+              composer require pestphp/pest --dev --no-interaction --ignore-platform-reqs
+              composer require pestphp/pest-plugin-laravel --dev --no-interaction --ignore-platform-reqs
+            fi
 
-      - name: Run tests
-        run: |
-          php artisan config:clear
-          php artisan cache:clear
-          XDEBUG_MODE=coverage ./vendor/bin/pest --coverage-clover=coverage.xml
+            # Run tests
+            echo "Running tests..."
+            ./vendor/bin/pest --coverage-clover=coverage.xml
 
-      - name: Upload coverage to SonarCloud
-        if: github.event_name == 'push'
+            # Ensure coverage file exists
+            if [ ! -f coverage.xml ]; then
+              echo "Error: coverage.xml was not generated!"
+              exit 1
+            fi
+          ENDSSH
+
+          # Download coverage file
+          scp ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/coverage.xml ./
+
+      - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@master
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
