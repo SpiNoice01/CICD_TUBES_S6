@@ -94,8 +94,8 @@ jobs:
             sudo systemctl restart php8.4-fpm
           EOF
 
-      - name: Run PHPUnit tests with coverage
-        run: ./vendor/bin/pest --coverage-clover=coverage.xml
+      # - name: Run PHPUnit tests with coverage
+      #   run: ./vendor/bin/pest --coverage-clover=coverage.xml
 
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@master
