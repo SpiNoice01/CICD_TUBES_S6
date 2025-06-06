@@ -44,6 +44,11 @@ jobs:
 
             cd ~/laravel-app
 
+            echo "🔄 Updating Node.js..."
+            curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+            sudo apt-get install -y nodejs
+            sudo npm install -g npm
+
             echo "🔧 Fixing permissions..."
             sudo chown -R $USER:www-data storage bootstrap/cache
             sudo chmod -R 775 storage bootstrap/cache
