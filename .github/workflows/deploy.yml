@@ -15,7 +15,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "18" # or '18' for LTS
+          node-version: "18"
 
       - name: Setup SSH
         shell: bash
@@ -58,14 +58,26 @@ jobs:
             echo "📦 Installing PHP dependencies..."
             sudo apt-get update
             sudo apt-get install -y php-sqlite3
-            php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
-            EXPECTED_SIGNATURE="$(php -r 'copy("https://composer.github.io/installer.sig", "php://stdout");')"
-            php -r "if (hash_file('sha384', 'composer-setup.php') === '$EXPECTED_SIGNATURE') { echo 'Installer verified'; } else { echo 'Installer corrupt'; unlink('composer-setup.php'); exit(1); }"
-            php composer-setup.php
-            php -r "unlink('composer-setup.php');"
-            sudo mv composer.phar /usr/local/bin/composer
-            sudo chmod +x /usr/local/bin/composer
+            if ! command -v composer &> /dev/null; then
+              php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
+              EXPECTED_SIGNATURE="$(php -r 'copy("https://composer.github.io/installer.sig", "php://stdout");')"
+              php -r "if (hash_file('sha384', 'composer-setup.php') === '$EXPECTED_SIGNATURE') { echo 'Installer verified'; } else { echo 'Installer corrupt'; unlink('composer-setup.php'); exit(1); }"
+              php composer-setup.php
+              php -r "unlink('composer-setup.php');"
+              sudo mv composer.phar /usr/local/bin/composer
+              sudo chmod +x /usr/local/bin/composer
+            fi
             composer install --no-dev --optimize-autoloader --ignore-platform-reqs
+
+            echo "📦 Installing Node dependencies..."
+            if ! command -v npm &> /dev/null; then
+              curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+              sudo apt-get install -y nodejs
+            fi
+            npm install
+
+            echo "🏗️ Building frontend assets..."
+            npm run build
 
             echo "🗃️ Migrating database..."
             php artisan cache:table || true
