@@ -83,11 +83,6 @@ jobs:
             php artisan cache:clear
             php artisan view:clear
 
-            echo "📦 run npm..."
-            cd ~/laravel-app
-            npm install
-            npm run build
-
             echo "♻️ Restarting services..."
             sudo systemctl restart nginx
             sudo systemctl restart php8.4-fpm
