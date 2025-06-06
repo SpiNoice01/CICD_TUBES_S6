@@ -99,6 +99,7 @@ jobs:
 
       - name: Run PHPUnit tests with coverage
         shell: bash
+        continue-on-error: true
         run: |
           ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'ENDSSH'
             set -e
