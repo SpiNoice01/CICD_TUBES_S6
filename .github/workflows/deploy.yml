@@ -61,8 +61,8 @@ jobs:
             php -r "if (hash_file('sha384', 'composer-setup.php') === '$EXPECTED_SIGNATURE') { echo 'Installer verified'; } else { echo 'Installer corrupt'; unlink('composer-setup.php'); exit(1); }"
             php composer-setup.php
             php -r "unlink('composer-setup.php');"
-            php composer.phar self-update
-            mv composer.phar /usr/local/bin/composer
+            sudo mv composer.phar /usr/local/bin/composer
+            sudo chmod +x /usr/local/bin/composer
             composer install --no-dev --optimize-autoloader --ignore-platform-reqs
 
             echo "📦 Installing Node.js dependencies..."
