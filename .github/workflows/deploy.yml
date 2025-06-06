@@ -57,7 +57,8 @@ jobs:
 
             echo "📦 Installing PHP dependencies..."
             php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
-            php -r "if (hash_file('sha384', 'composer-setup.php') === 'e0012edf3e80b6978849f5eff0d4b4e16318854d24ae64f26d17af3898267f4e0131255c41e0') { echo 'Installer verified'; } else { echo 'Installer corrupt'; unlink('composer-setup.php'); } echo PHP_EOL;"
+            EXPECTED_SIGNATURE="$(php -r 'copy("https://composer.github.io/installer.sig", "php://stdout");')"
+            php -r "if (hash_file('sha384', 'composer-setup.php') === '$EXPECTED_SIGNATURE') { echo 'Installer verified'; } else { echo 'Installer corrupt'; unlink('composer-setup.php'); exit(1); }"
             php composer-setup.php
             php -r "unlink('composer-setup.php');"
             php composer.phar self-update
