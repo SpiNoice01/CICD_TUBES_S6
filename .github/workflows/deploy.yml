@@ -133,13 +133,16 @@ jobs:
         run: |
           cp .env.example .env.testing
           php artisan key:generate --env=testing
-          echo "DB_CONNECTION=sqlite" >> .env.testing
-          echo "DB_DATABASE=:memory:" >> .env.testing
-          touch database/database.sqlite
+          echo "DB_CONNECTION=mysql" >> .env.testing
+          echo "DB_HOST=127.0.0.1" >> .env.testing
+          echo "DB_PORT=3306" >> .env.testing
+          echo "DB_DATABASE=kanh2553_campfires" >> .env.testing
+          echo "DB_USERNAME=root" >> .env.testing
+          echo "DB_PASSWORD=" >> .env.testing
 
       - name: Run migrations
         run: |
-          php artisan migrate --database=sqlite --force
+          php artisan migrate --force
 
       - name: Run tests
         run: |
