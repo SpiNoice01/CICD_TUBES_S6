@@ -29,9 +29,19 @@ jobs:
       - name: Setup PHP environment # NEW - Add after Node.js steps
         run: |
           sudo apt-get update
-          sudo apt-get install -y php-xdebug php-sqlite3
+          sudo apt-get install -y php8.3 php8.3-cli php8.3-xml php8.3-mbstring php8.3-sqlite3
           echo "xdebug.mode=coverage" | sudo tee -a /etc/php/8.4/cli/conf.d/xdebug.ini
           echo "memory_limit=-1" >> php.ini
+
+          # Install Xdebug for the correct PHP version
+          sudo apt-get install -y php8.3-xdebug
+
+          # Configure Xdebug
+          echo "xdebug.mode=coverage" | sudo tee -a /etc/php/8.3/mods-available/xdebug.ini
+          sudo phpenmod xdebug
+
+          # Verify installation
+          php -v
 
       - name: Install npm dependencies
         run: npm install
@@ -67,8 +77,10 @@ jobs:
 
             cd ~/laravel-app
 
-            sudo apt-get install -y php-xdebug
-            echo "xdebug.mode=coverage" | sudo tee -a /etc/php/8.4/cli/conf.d/xdebug.ini
+            # Install Xdebug on remote
+            sudo apt-get install -y php8.3-xdebug
+            echo "xdebug.mode=coverage" | sudo tee -a /etc/php/8.3/mods-available/xdebug.ini
+            sudo phpenmod xdebug
 
             echo "🔧 Fixing permissions..."
             sudo chown -R $USER:www-data storage bootstrap/cache
