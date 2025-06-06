@@ -17,6 +17,12 @@ jobs:
         with:
           node-version: "18"
 
+      - name: Install npm dependencies
+        run: npm install
+
+      - name: Build assets
+        run: npm run build
+
       - name: Setup SSH
         shell: bash
         run: |
@@ -64,7 +70,7 @@ jobs:
             if ! [ -x "$(command -v composer)" ]; then
               php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
               EXPECTED_SIGNATURE="$(php -r 'copy(\"https://composer.github.io/installer.sig\", \"php://stdout\");')"
-              php -r "if (hash_file('sha384', 'composer-setup.php') === '\$EXPECTED_SIGNATURE') { echo 'Installer verified'; } else { echo 'Installer corrupt'; unlink('composer-setup.php'); exit(1); }"
+              php -r "if (hash_file('sha384', 'composer-setup.php') === '$EXPECTED_SIGNATURE') { echo 'Installer verified'; } else { echo 'Installer corrupt'; unlink('composer-setup.php'); exit(1); }"
               php composer-setup.php
               sudo mv composer.phar /usr/local/bin/composer
               sudo chmod +x /usr/local/bin/composer
