@@ -106,7 +106,7 @@ jobs:
           EOF
 
   test:
-    needs: deploy
+    needs: [deploy]
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -135,6 +135,11 @@ jobs:
           echo "DB_CONNECTION=sqlite" >> .env.testing
           echo "DB_DATABASE=:memory:" >> .env.testing
           touch database/database.sqlite
+
+      - name: Create cache table
+        run: |
+          php artisan cache:table
+          php artisan migrate --database=sqlite --force
 
       - name: Run tests
         run: |
