@@ -7,10 +7,12 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup SSH
+        shell: bash
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
@@ -18,7 +20,8 @@ jobs:
           echo "Host *" > ~/.ssh/config
           echo "  StrictHostKeyChecking no" >> ~/.ssh/config
 
-      - name: Deploy Application (Safe Mode)
+      - name: Deploy Application via rsync
+        shell: bash
         run: |
           rsync -avz --no-perms --no-owner --no-group --delete \
             -e "ssh -o StrictHostKeyChecking=no" \
@@ -28,33 +31,42 @@ jobs:
             --exclude='node_modules' \
             ./ ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/
 
-      - name: Post-Deployment Setup
+      - name: Remote Setup & Deploy
+        shell: bash
         run: |
-          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} '
-          cd ~/laravel-app
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
+            set -e
 
-          # Fix permissions (run as sudo on server)
-          sudo chown -R $USER:www-data storage bootstrap/cache
-          sudo chmod -R 775 storage bootstrap/cache
+            cd ~/laravel-app
 
-          # Environment setup
-          [ ! -f .env ] && cp .env.example .env && php artisan key:generate
+            echo "🔧 Fixing permissions..."
+            sudo chown -R $USER:www-data storage bootstrap/cache
+            sudo chmod -R 775 storage bootstrap/cache
 
-          # Install dependencies
-          composer install --no-dev --optimize-autoloader --ignore-platform-reqs
-          npm install --omit=dev
-          npm run build
+            echo "🌱 Setting up environment..."
+            if [ ! -f .env ]; then
+              cp .env.example .env
+              php artisan key:generate
+            fi
 
-          # Database setup
-          php artisan cache:table
-          php artisan session:table
-          php artisan migrate --force
+            echo "📦 Installing PHP dependencies..."
+            composer install --no-dev --optimize-autoloader --ignore-platform-reqs
 
-          # Clear caches
-          php artisan config:clear
-          php artisan cache:clear
-          php artisan view:clear
+            echo "📦 Installing Node.js dependencies..."
+            npm install --omit=dev
+            npm run build
 
-          # Restart services
-          sudo systemctl restart nginx php8.4-fpm
-          '
+            echo "🗃️ Migrating database..."
+            php artisan cache:table || true
+            php artisan session:table || true
+            php artisan migrate --force
+
+            echo "🧹 Clearing caches..."
+            php artisan config:clear
+            php artisan cache:clear
+            php artisan view:clear
+
+            echo "♻️ Restarting services..."
+            sudo systemctl restart nginx
+            sudo systemctl restart php8.4-fpm
+          EOF
