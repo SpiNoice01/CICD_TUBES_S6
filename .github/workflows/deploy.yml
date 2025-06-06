@@ -15,7 +15,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "18" # or '18' for LTS
+          node-version: "18"
 
       - name: Setup SSH
         shell: bash
@@ -53,18 +53,24 @@ jobs:
             if [ ! -f .env ]; then
               cp .env.example .env
               php artisan key:generate
+              echo "✅ Application key generated and saved to .env"
+            else
+              echo "✅ .env already exists, skipping key generation"
             fi
 
             echo "📦 Installing PHP dependencies..."
             sudo apt-get update
-            sudo apt-get install -y php-sqlite3
-            php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
-            EXPECTED_SIGNATURE="$(php -r 'copy("https://composer.github.io/installer.sig", "php://stdout");')"
-            php -r "if (hash_file('sha384', 'composer-setup.php') === '$EXPECTED_SIGNATURE') { echo 'Installer verified'; } else { echo 'Installer corrupt'; unlink('composer-setup.php'); exit(1); }"
-            php composer-setup.php
-            php -r "unlink('composer-setup.php');"
-            sudo mv composer.phar /usr/local/bin/composer
-            sudo chmod +x /usr/local/bin/composer
+            sudo apt-get install -y php-sqlite3 unzip curl
+            if ! [ -x "$(command -v composer)" ]; then
+              php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
+              EXPECTED_SIGNATURE="$(php -r 'copy(\"https://composer.github.io/installer.sig\", \"php://stdout\");')"
+              php -r "if (hash_file('sha384', 'composer-setup.php') === '\$EXPECTED_SIGNATURE') { echo 'Installer verified'; } else { echo 'Installer corrupt'; unlink('composer-setup.php'); exit(1); }"
+              php composer-setup.php
+              sudo mv composer.phar /usr/local/bin/composer
+              sudo chmod +x /usr/local/bin/composer
+              php -r "unlink('composer-setup.php');"
+            fi
+
             composer install --no-dev --optimize-autoloader --ignore-platform-reqs
 
             echo "🗃️ Migrating database..."
