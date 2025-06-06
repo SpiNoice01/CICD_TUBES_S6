@@ -26,28 +26,38 @@ jobs:
         with:
           node-version: "18"
 
-      - name: Setup PHP environment # NEW - Add after Node.js steps
+      - name: Setup PHP environment
         run: |
           sudo apt-get update
-          sudo apt-get install -y php8.3 php8.3-cli php8.3-xml php8.3-mbstring php8.3-sqlite3
-          echo "xdebug.mode=coverage" | sudo tee -a /etc/php/8.4/cli/conf.d/xdebug.ini
-          echo "memory_limit=-1" >> php.ini
-
-          # Install Xdebug for the correct PHP version
-          sudo apt-get install -y php8.3-xdebug
+          sudo apt-get install -y php8.3 php8.3-cli php8.3-xml php8.3-mbstring php8.3-sqlite3 php8.3-xdebug
 
           # Configure Xdebug
           echo "xdebug.mode=coverage" | sudo tee -a /etc/php/8.3/mods-available/xdebug.ini
           sudo phpenmod xdebug
+          echo "memory_limit=-1" | sudo tee -a /etc/php/8.3/cli/php.ini
 
-          # Verify installation
           php -v
+          php -m | grep xdebug
 
       - name: Install npm dependencies
         run: npm install
 
       - name: Build assets
         run: npm run build
+
+      - name: Run tests with coverage
+        env:
+          DB_CONNECTION: mysql
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_DATABASE: laravel_test
+          DB_USERNAME: root
+          DB_PASSWORD: root
+          APP_ENV: testing
+        run: |
+          composer install
+          php artisan config:clear
+          php8.3 ./vendor/bin/pest --coverage-clover=coverage.xml
 
       - name: Setup SSH
         shell: bash
@@ -67,6 +77,7 @@ jobs:
             --exclude='.env' \
             --exclude='storage/*' \
             --exclude='node_modules' \
+            --exclude='coverage.xml' \
             ./ ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/
 
       - name: Remote Setup & Deploy
@@ -74,13 +85,11 @@ jobs:
         run: |
           ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
             set -e
-
             cd ~/laravel-app
 
-            # Install Xdebug on remote
-            sudo apt-get install -y php8.3-xdebug
-            echo "xdebug.mode=coverage" | sudo tee -a /etc/php/8.3/mods-available/xdebug.ini
-            sudo phpenmod xdebug
+            # Install required packages
+            sudo apt-get update
+            sudo apt-get install -y php8.3 php8.3-fpm php8.3-cli php8.3-mysql php8.3-mbstring php8.3-xml php8.3-zip unzip curl
 
             echo "🔧 Fixing permissions..."
             sudo chown -R $USER:www-data storage bootstrap/cache
@@ -90,75 +99,15 @@ jobs:
             if [ ! -f .env ]; then
               cp .env.example .env
               php artisan key:generate
-              echo "✅ Application key generated and saved to .env"
-            else
-              echo "✅ .env already exists, skipping key generation"
             fi
 
-            echo "📦 Installing PHP dependencies..."
-            sudo apt-get update
-            sudo apt-get install -y php-sqlite3 unzip curl
-            if ! [ -x "$(command -v composer)" ]; then
-              php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
-              EXPECTED_SIGNATURE="$(php -r 'copy(\"https://composer.github.io/installer.sig\", \"php://stdout\");')"
-              php -r "if (hash_file('sha384', 'composer-setup.php') === '$EXPECTED_SIGNATURE') { echo 'Installer verified'; } else { echo 'Installer corrupt'; unlink('composer-setup.php'); exit(1); }"
-              php composer-setup.php
-              sudo mv composer.phar /usr/local/bin/composer
-              sudo chmod +x /usr/local/bin/composer
-              php -r "unlink('composer-setup.php');"
-            fi
-
-            composer install --no-dev --optimize-autoloader --ignore-platform-reqs
+            echo "📦 Installing Composer dependencies..."
+            composer install --no-dev --optimize-autoloader
 
             echo "🗃️ Migrating database..."
-            php artisan cache:table || true
-            php artisan session:table || true
             php artisan migrate --force
-
-            echo "🧹 Clearing caches..."
-            php artisan config:clear
-            php artisan cache:clear
-            php artisan view:clear
 
             echo "♻️ Restarting services..."
             sudo systemctl restart nginx
-            sudo systemctl restart php8.4-fpm
+            sudo systemctl restart php8.3-fpm
           EOF
-
-      - name: Run PHPUnit tests with coverage
-        shell: bash
-        continue-on-error: true
-        run: |
-          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'ENDSSH'
-            set -e
-            cd ~/laravel-app
-
-            echo "Current directory: $(pwd)"
-            ls -la
-            echo "Vendor contents:"
-            ls -la vendor/bin || true
-
-            sudo chown -R $USER:$USER .
-            sudo chmod -R 755 .
-
-            echo "Installing Composer dependencies..."
-            composer install --no-interaction --no-dev --optimize-autoloader --ignore-platform-reqs
-
-            if [ ! -f vendor/bin/pest ]; then
-              echo "Pest not found! Installing Pest..."
-              composer require pestphp/pest --dev --no-interaction --ignore-platform-reqs
-              composer require pestphp/pest-plugin-laravel --dev --no-interaction --ignore-platform-reqs
-            fi
-
-            echo "Running tests..."
-            ./vendor/bin/pest --coverage-clover=coverage.xml
-
-            if [ ! -f coverage.xml ]; then
-              echo "Error: coverage.xml was not generated!"
-              exit 1
-            fi
-
-            cat coverage.xml
-          ENDSSH
-
-          scp ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/coverage.xml ./
