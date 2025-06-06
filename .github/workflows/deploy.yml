@@ -151,3 +151,6 @@ jobs:
             -Dsonar.organization=spinoice01
             -Dsonar.host.url=https://sonarcloud.io
             -Dsonar.php.coverage.reportPaths=coverage.xml
+
+      - name: List downloaded files
+        run: ls -l coverage.xml
