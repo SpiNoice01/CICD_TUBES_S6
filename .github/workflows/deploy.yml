@@ -75,6 +75,9 @@ jobs:
               nvm use 18
             fi
             npm install --omit=dev
+            npm list vite # Add this line to verify vite installation
+
+            echo "Building frontend assets..."
             npm run build
 
             echo "🗃️ Migrating database..."
