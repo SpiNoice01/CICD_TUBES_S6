@@ -1,8 +1,6 @@
-name: Deploy Laravel to Azure VM
+name: Deploy Laravel
 
-on:
-  push:
-    branches: [main]
+on: [push]
 
 jobs:
   deploy:
@@ -10,29 +8,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup SSH
+      - name: Install SSH Key
+        uses: shimataro/ssh-key-action@v2
+        with:
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          known_hosts: "just-a-placeholder" # Workaround for the error
+
+      - name: Deploy via RSYNC
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          echo "Host *" > ~/.ssh/config
-          echo "  StrictHostKeyChecking no" >> ~/.ssh/config
+          rsync -avz --delete \
+            -e "ssh -o StrictHostKeyChecking=no" \
+            --exclude='.git' \
+            --exclude='.env' \
+            --exclude='storage/' \
+            ./ ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/
 
-      - name: Deploy via SSH
+      - name: Run Deployment Commands
         run: |
-          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-          # Create directory
-          mkdir -p ~/laravel-app
-
-          # Clone your repo directly
-          git clone https://github.com/${{ github.repository }}.git ~/laravel-app
-
-          # Minimal setup
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} '
           cd ~/laravel-app
           composer install --no-dev --optimize-autoloader
           [ ! -f .env ] && cp .env.example .env && php artisan key:generate
-
-          # Start PHP server
-          nohup php artisan serve --host=0.0.0.0 --port=8000 > /dev/null 2>&1 &
-          echo "Your app is running at: http://$(curl -s ifconfig.me):8000"
-          EOF
+          chmod -R 775 storage bootstrap/cache
+          '
