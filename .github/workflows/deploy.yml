@@ -94,22 +94,47 @@ jobs:
             sudo systemctl restart php8.4-fpm
           EOF
 
-      - name: Run PHPUnit tests with coverage and download results
+      - name: Checkout repository for PHPUnit tests
+        uses: actions/checkout@v4
+
+      - name: Run PHPUnit tests with coverage
         shell: bash
         run: |
-          # Run tests on remote server with proper setup
-          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'ENDSSH'
             set -e
             cd ~/laravel-app
 
-            # Ensure dependencies are installed
-            if [ ! -d vendor ]; then
-              composer install --no-dev --optimize-autoloader --ignore-platform-reqs
+            # Debug: Show directory structure
+            echo "Current directory: $(pwd)"
+            ls -la
+            echo "Vendor contents:"
+            ls -la vendor/bin || true
+
+            # Ensure proper permissions
+            sudo chown -R $USER:$USER .
+            sudo chmod -R 755 .
+
+            # Install dependencies (force fresh install)
+            echo "Installing Composer dependencies..."
+            composer install --no-interaction --no-dev --optimize-autoloader --ignore-platform-reqs
+
+            # Verify Pest installation
+            if [ ! -f vendor/bin/pest ]; then
+              echo "Pest not found! Installing Pest..."
+              composer require pestphp/pest --dev --no-interaction --ignore-platform-reqs
+              composer require pestphp/pest-plugin-laravel --dev --no-interaction --ignore-platform-reqs
             fi
 
-            # Run tests with coverage
+            # Run tests
+            echo "Running tests..."
             ./vendor/bin/pest --coverage-clover=coverage.xml
-          EOF
+
+            # Ensure coverage file exists
+            if [ ! -f coverage.xml ]; then
+              echo "Error: coverage.xml was not generated!"
+              exit 1
+            fi
+          ENDSSH
 
           # Download coverage file
           scp ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/coverage.xml ./
