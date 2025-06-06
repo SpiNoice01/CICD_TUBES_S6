@@ -21,8 +21,8 @@ jobs:
       - name: Install Dependencies on Server
         run: |
           ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} '
-          sudo apt update
-          sudo apt install -y php8.4-dom php8.4-xml php8.4-mbstring php8.4-zip
+          sudo apt update -y
+          sudo apt install -y php8.4-dom php8.4-xml php8.4-mbstring php8.4-zip php8.4-mysql
           sudo systemctl restart php8.4-fpm
           '
 
@@ -33,14 +33,45 @@ jobs:
             --exclude='.git' \
             --exclude='.env' \
             --exclude='storage/*' \
+            --exclude='node_modules' \
             ./ ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/
 
-      - name: Run Composer Install
+      - name: Setup Application
         run: |
           ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} '
           cd ~/laravel-app
-          composer install --no-dev --ignore-platform-reqs
-          [ ! -f .env ] && cp .env.example .env && php artisan key:generate
-          chmod -R 775 storage bootstrap/cache
-          php artisan serve --host=0.0.0.0 --port=8000 > /dev/null 2>&1 &
+
+          # Install dependencies
+          composer install --no-dev --optimize-autoloader --ignore-platform-reqs
+          npm install --omit=dev
+          npm run build
+
+          # Environment setup
+          if [ ! -f .env ]; then
+            cp .env.example .env
+            php artisan key:generate
+          fi
+
+          # Database setup
+          php artisan cache:table
+          php artisan session:table
+          php artisan migrate --force
+
+          # Permissions
+          sudo chown -R www-data:www-data storage bootstrap/cache
+          sudo chmod -R 775 storage bootstrap/cache
+
+          # Restart services
+          sudo systemctl restart nginx php8.4-fpm
+          '
+
+      - name: Verify Deployment
+        run: |
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} '
+          cd ~/laravel-app
+          php artisan config:clear
+          php artisan cache:clear
+          php artisan route:clear
+          php artisan view:clear
+          curl -I http://localhost
           '
