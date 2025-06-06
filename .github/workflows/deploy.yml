@@ -88,6 +88,7 @@ jobs:
             sudo systemctl restart php8.4-fpm
 
             echo "📦 run npm..."
+            cd ~/laravel-app
             npm install
             npm run build
           EOF
