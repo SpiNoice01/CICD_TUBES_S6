@@ -95,7 +95,7 @@ jobs:
           EOF
 
       - name: Run PHPUnit tests with coverage
-        run: ./vendor/bin/phpunit --coverage-clover=coverage.xml
+        run: ./vendor/bin/pest --coverage-clover=coverage.xml
 
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@master
