@@ -97,8 +97,19 @@ jobs:
       - name: Run PHPUnit tests with coverage and download results
         shell: bash
         run: |
-          # Run tests on remote server
-          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "cd ~/laravel-app && ./vendor/bin/pest --coverage-clover=coverage.xml"
+          # Run tests on remote server with proper setup
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
+            set -e
+            cd ~/laravel-app
+
+            # Ensure dependencies are installed
+            if [ ! -d vendor ]; then
+              composer install --no-dev --optimize-autoloader --ignore-platform-reqs
+            fi
+
+            # Run tests with coverage
+            ./vendor/bin/pest --coverage-clover=coverage.xml
+          EOF
 
           # Download coverage file
           scp ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/coverage.xml ./
