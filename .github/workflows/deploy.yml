@@ -1,13 +1,14 @@
-name: Deploy Laravel to Azure VM and Analyze with SonarCloud
+name: Laravel CI/CD Pipeline
 
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
 
 jobs:
-  deploy:
+  test:
     runs-on: ubuntu-latest
-
     services:
       mysql:
         image: mysql:8.0
@@ -41,8 +42,9 @@ jobs:
       - name: Build assets
         run: npm run build
 
-      - name: Configure test environment
+      - name: Create environment files
         run: |
+          cp .env.example .env
           cp .env.example .env.testing
           echo "APP_ENV=testing" >> .env.testing
           echo "DB_CONNECTION=mysql" >> .env.testing
@@ -52,16 +54,20 @@ jobs:
           echo "DB_USERNAME=root" >> .env.testing
           echo "DB_PASSWORD=root" >> .env.testing
 
-      - name: Install dependencies
-        run: composer install --no-interaction --prefer-dist
-
-      - name: Generate key
+      - name: Generate application key
         run: php artisan key:generate
 
-      - name: Run tests with coverage
+      - name: Install Composer dependencies
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Prepare database
         run: |
           php artisan config:clear
-          XDEBUG_MODE=coverage ./vendor/bin/pest --coverage-clover=coverage.xml
+          php artisan cache:clear
+          php artisan migrate:fresh --env=testing --force
+
+      - name: Run tests with coverage
+        run: XDEBUG_MODE=coverage ./vendor/bin/pest --coverage-clover=coverage.xml
 
       - name: Upload coverage to SonarCloud
         uses: sonarsource/sonarcloud-github-action@master
@@ -69,6 +75,13 @@ jobs:
           projectBaseDir: .
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       - name: Setup SSH
         shell: bash
@@ -89,6 +102,7 @@ jobs:
             --exclude='storage/*' \
             --exclude='node_modules' \
             --exclude='tests' \
+            --exclude='phpunit.xml' \
             ./ ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/
 
       - name: Remote Setup & Deploy
@@ -111,8 +125,13 @@ jobs:
             echo "📦 Installing PHP dependencies..."
             composer install --no-dev --optimize-autoloader --ignore-platform-reqs
 
-            echo "🗃️ Migrating database..."
+            echo "🗃️ Setting up database..."
             php artisan migrate --force
+
+            echo "🧹 Clearing caches..."
+            php artisan config:clear
+            php artisan cache:clear
+            php artisan view:clear
 
             echo "♻️ Restarting services..."
             sudo systemctl restart nginx
