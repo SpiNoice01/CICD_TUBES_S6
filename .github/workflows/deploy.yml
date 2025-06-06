@@ -94,8 +94,14 @@ jobs:
             sudo systemctl restart php8.4-fpm
           EOF
 
-      # - name: Run PHPUnit tests with coverage
-      #   run: ./vendor/bin/pest --coverage-clover=coverage.xml
+      - name: Run PHPUnit tests with coverage and download results
+        shell: bash
+        run: |
+          # Run tests on remote server
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "cd ~/laravel-app && ./vendor/bin/pest --coverage-clover=coverage.xml"
+
+          # Download coverage file
+          scp ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/coverage.xml ./
 
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@master
