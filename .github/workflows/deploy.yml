@@ -132,23 +132,10 @@ jobs:
               echo "Error: coverage.xml was not generated!"
               exit 1
             fi
+
+            # Print coverage.xml contents
+            cat coverage.xml
           ENDSSH
 
           # Download coverage file
           scp ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/coverage.xml ./
-
-      - name: SonarCloud Scan
-        uses: SonarSource/sonarcloud-github-action@master
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        with:
-          args: >
-            -Dsonar.projectKey=SpiNoice01_CICD_TUBES_S6
-            -Dsonar.organization=spinoice01
-            -Dsonar.host.url=https://sonarcloud.io
-            -Dsonar.php.coverage.reportPaths=coverage.xml
-
-      - name: Print coverage.xml contents
-        run: |
-          cat coverage.xml
