@@ -115,11 +115,11 @@ jobs:
       mysql:
         image: mysql:5.7
         env:
-          MYSQL_ROOT_PASSWORD: ""
+          MYSQL_ROOT_PASSWORD: "rootpassword" # Set a valid password
           MYSQL_DATABASE: kanh2553_campfires
         ports:
           - 3306:3306
-        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
+        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=5
 
     steps:
       - name: Checkout code
@@ -148,13 +148,17 @@ jobs:
           echo "DB_PORT=3306" >> .env.testing
           echo "DB_DATABASE=kanh2553_campfires" >> .env.testing
           echo "DB_USERNAME=root" >> .env.testing
-          echo "DB_PASSWORD=" >> .env.testing
+          echo "DB_PASSWORD=rootpassword" >> .env.testing  # Use the same password
 
       - name: Wait for MySQL to be ready
         run: |
-          while ! mysqladmin ping -h127.0.0.1 --silent; do
+          while ! mysqladmin ping -h127.0.0.1 -uroot -prootpassword --silent; do
             sleep 1
           done
+
+      - name: Print MySQL service logs
+        run: |
+          docker logs mysql
 
       - name: Run migrations
         run: |
