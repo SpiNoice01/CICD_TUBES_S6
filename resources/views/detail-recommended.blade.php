@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+{{-- test --}}
 
 <head>
     <meta charset="UTF-8">
@@ -8,7 +9,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800;900&display=swap"
         rel="stylesheet" />
     @vite(['resources/css/app.css', 'resources/js/app.js'])
-    <link rel="icon" href="{{asset('logo.svg')}}">
+    <link rel="icon" href="{{ asset('logo.svg') }}">
 
     <title>Campfires</title>
 </head>
@@ -77,8 +78,10 @@
                                     <span class="text-sm text-gray-500 font-medium">Rp.
                                         {{ number_format($item->rental_price, 0, ',', '.') }}</span>
                                 </div>
-                                <a href="{{ route('front.productDetail', $item->id_product) }}" class=" p-2 rounded-full">
-                                    <img src="{{ asset('assets/Images/icon/arrow.png') }}" alt="Arrow" class="w-5 h-5" />
+                                <a href="{{ route('front.productDetail', $item->id_product) }}"
+                                    class=" p-2 rounded-full">
+                                    <img src="{{ asset('assets/Images/icon/arrow.png') }}" alt="Arrow"
+                                        class="w-5 h-5" />
                                 </a>
                             </div>
                         </div>
