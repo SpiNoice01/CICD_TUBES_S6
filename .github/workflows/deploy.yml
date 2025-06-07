@@ -17,6 +17,13 @@ jobs:
         with:
           node-version: "18"
 
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          extensions: xdebug, sqlite3
+          coverage: xdebug
+
       - name: Install npm dependencies
         run: npm install
 
@@ -35,7 +42,7 @@ jobs:
       - name: Deploy Application via rsync
         shell: bash
         run: |
-          rsync -avz --no-perms --no-owner --no-group --delete \
+          rsync -avz --no-perms --no-owner --no-group --delete --delete-excluded \
             -e "ssh -o StrictHostKeyChecking=no" \
             --exclude='.git' \
             --exclude='.env' \
@@ -66,17 +73,22 @@ jobs:
 
             echo "📦 Installing PHP dependencies..."
             sudo apt-get update
-            sudo apt-get install -y php-xdebug php-sqlite3 unzip curl
-            sudo systemctl restart php8.4-fpm
+            sudo apt-get install -y php-xdebug php-sqlite3 unzip curl zip
+            sudo systemctl restart php8.2-fpm
 
-            if ! [ -x "$(command -v composer)" ]; then
+            if ! command -v composer &> /dev/null; then
               php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
-              EXPECTED_SIGNATURE="$(php -r 'copy(\"https://composer.github.io/installer.sig\", \"php://stdout\");')"
-              php -r "if (hash_file('sha384', 'composer-setup.php') === '$EXPECTED_SIGNATURE') { echo 'Installer verified'; } else { echo 'Installer corrupt'; unlink('composer-setup.php'); exit(1); }"
+              EXPECTED_SIGNATURE=$(curl -s https://composer.github.io/installer.sig)
+              ACTUAL_SIGNATURE=$(php -r "echo hash_file('sha384', 'composer-setup.php');")
+              if [ "$EXPECTED_SIGNATURE" != "$ACTUAL_SIGNATURE" ]; then
+                echo 'ERROR: Invalid installer signature'
+                rm composer-setup.php
+                exit 1
+              fi
               php composer-setup.php
               sudo mv composer.phar /usr/local/bin/composer
               sudo chmod +x /usr/local/bin/composer
-              php -r "unlink('composer-setup.php');"
+              rm composer-setup.php
             fi
 
             echo "Installing Composer dependencies..."
@@ -103,7 +115,7 @@ jobs:
             set -e
             echo "♻️ Restarting services..."
             sudo systemctl restart nginx
-            sudo systemctl restart php8.4-fpm
+            sudo systemctl restart php8.2-fpm
 
             echo "🚀 Starting Laravel development server..."
             cd ~/laravel-app
@@ -120,7 +132,7 @@ jobs:
             set +e
             echo "✅ Checking services..."
             sudo systemctl is-active nginx || echo "⚠️ Nginx is not running!"
-            sudo systemctl is-active php8.4-fpm || echo "⚠️ PHP-FPM is not running!"
+            sudo systemctl is-active php8.2-fpm || echo "⚠️ PHP-FPM is not running!"
 
             echo "🌐 Checking web server..."
             curl -sSf http://localhost:8000 || echo "⚠️ Laravel server not responding!"
@@ -131,33 +143,25 @@ jobs:
         continue-on-error: true
         run: |
           ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-            set -x
+            set -e
             cd ~/laravel-app
 
-            # Create coverage directory
             mkdir -p coverage-report
 
-            # Run tests with Xdebug enabled
-            echo "Running tests with coverage..."
-            XDEBUG_MODE=coverage ./vendor/bin/pest --coverage-html=coverage-report --coverage-clover=coverage.xml
+            echo "Running tests with coverage (Pest)..."
+            XDEBUG_MODE=coverage ./vendor/bin/pest --coverage-html=coverage-report --coverage-clover=coverage.xml || true
 
-            # Fallback to PHPUnit if Pest fails
             if [ ! -f coverage.xml ]; then
               echo "Trying PHPUnit as fallback..."
-              XDEBUG_MODE=coverage ./vendor/bin/phpunit --coverage-html coverage-report --coverage-clover coverage.xml
+              XDEBUG_MODE=coverage ./vendor/bin/phpunit --coverage-html coverage-report --coverage-clover coverage.xml || true
             fi
 
-            # Verify files were created
-            echo "Generated files:"
-            ls -la coverage-report/ coverage.xml || echo "No coverage files generated"
-
-            # Zip results if they exist
             if [ -f coverage.xml ]; then
               echo "Coverage generation successful!"
               zip -r coverage-artifacts.zip coverage-report/ coverage.xml
             else
               echo "Failed to generate coverage reports"
-              exit 0  # Don't fail the workflow
+              exit 1
             fi
           EOF
 
