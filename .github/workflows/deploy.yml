@@ -125,43 +125,54 @@ jobs:
 
       - name: Run Tests and Generate Coverage
         shell: bash
-        continue-on-error: true # This allows the workflow to continue even if tests fail
+        continue-on-error: true
         run: |
           ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-            set +e  # Disable immediate exit on error to capture coverage even if tests fail
+          set +e
+          cd ~/laravel-app
 
-            cd ~/laravel-app
+          # Create coverage directories if they don't exist
+          mkdir -p coverage-report
 
-            echo "🔍 Running tests (may fail but will still generate coverage)..."
-            ./vendor/bin/pest --coverage-html=coverage-report --coverage-clover=coverage.xml || true
+          # Run tests with explicit paths
+          ./vendor/bin/pest --coverage-html=./coverage-report --coverage-clover=./coverage.xml
 
-            echo "📊 Test execution completed (ignoring failures)"
-
-            # Always try to generate the coverage report
-            if [ -f coverage.xml ]; then
-              echo "✅ Coverage report generated successfully"
-              echo "Coverage Summary:"
-              grep -oP 'filename.*?line-rate="\K[^"]+' coverage.xml | \
-                awk '{sum += $1; count++} END {print "Average coverage: " sum/count*100 "%"}'
-            else
-              echo "❌ Failed to generate coverage report"
-              exit 0  # Still continue the workflow
-            fi
-
-            # Always show the last 20 lines of Laravel log for debugging
-            echo "📝 Last 20 lines of Laravel log:"
-            tail -20 ~/laravel.log || echo "No Laravel log found"
+          # Verify files were created
+          echo "Generated files:"
+          ls -la coverage-report/ coverage.xml || echo "No coverage files found"
           EOF
 
       - name: Upload Coverage Reports
-        if: always() # Always upload artifacts even if previous steps fail
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-reports
-          path: |
-            coverage-report/
-            coverage.xml
-          retention-days: 1
+        if: always()
+        run: |
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
+          cd ~/laravel-app
+          if [ -f coverage.xml ] && [ -d coverage-report ]; then
+            echo "Found coverage files, preparing to upload..."
+            # Zip the files for download
+            zip -r coverage-artifacts.zip coverage-report/ coverage.xml
+          else
+            echo "No coverage files found!"
+            exit 0
+          fi
+          EOF
+
+          # Download the zip file
+          scp ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/coverage-artifacts.zip ./
+
+          # Upload artifact
+          if [ -f coverage-artifacts.zip ]; then
+            unzip coverage-artifacts.zip
+            ls -la coverage-report/ coverage.xml
+            echo "Uploading coverage files..."
+            actions/upload-artifact@v4:
+              name: coverage-reports
+              path: |
+                coverage-report/
+                coverage.xml
+          else
+            echo "No coverage artifacts to upload"
+          fi
 
       - name: Final Status Report
         if: always()
