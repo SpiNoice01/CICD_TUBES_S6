@@ -114,6 +114,10 @@ jobs:
             echo "✅ Website is live (HTTP 200)"
           fi
 
+      - name: Verify Website
+        run: |
+          curl -sSf http://20.81.187.38:8000/ || (echo "Website is down!" && exit 1)
+
       - name: Run PHPUnit tests with coverage
         shell: bash
         continue-on-error: true
