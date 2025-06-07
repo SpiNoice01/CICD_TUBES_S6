@@ -77,7 +77,11 @@ jobs:
               php -r "unlink('composer-setup.php');"
             fi
 
-            composer install --no-dev --optimize-autoloader --ignore-platform-reqs
+            echo "Installing Composer dependencies..."
+            composer install --optimize-autoloader --ignore-platform-reqs
+
+            echo "Installing test dependencies..."
+            composer require pestphp/pest pestphp/pest-plugin-laravel --dev --no-interaction --ignore-platform-reqs
 
             echo "🗃️ Migrating database..."
             php artisan cache:table || true
@@ -88,84 +92,60 @@ jobs:
             php artisan config:clear
             php artisan cache:clear
             php artisan view:clear
+          EOF
 
+      - name: Start Application Services
+        shell: bash
+        run: |
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
+            set -e
             echo "♻️ Restarting services..."
             sudo systemctl restart nginx
             sudo systemctl restart php8.4-fpm
-          EOF
 
-      - name: Verify Nginx & PHP-FPM
-        shell: bash
-        run: |
-          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-            set -e
-            sudo systemctl is-active nginx || (echo "Nginx is not running!" && exit 1)
-            sudo systemctl is-active php8.4-fpm || (echo "PHP-FPM is not running!" && exit 1)
-            echo "✅ Services are running"
-          EOF
-      - name: Start Laravel Server
-        shell: bash
-        run: |
-          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-            set -e
+            echo "🚀 Starting Laravel development server..."
             cd ~/laravel-app
-            # Kill any existing process
             sudo pkill -f "php artisan serve" || true
-            # Start Laravel in background (nohup + disown keeps it running)
             nohup php artisan serve --host=0.0.0.0 --port=8000 > ~/laravel.log 2>&1 &
             disown
-            echo "Laravel server started on port 8000"
           EOF
 
-      # Run tests + generate coverage
-      - name: Run Tests with Coverage
+      - name: Verify Services
+        shell: bash
         run: |
           ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-            cd ~/laravel-app
-            ./vendor/bin/pest --coverage-html=coverage-report
+            set -e
+            echo "✅ Checking services..."
+            sudo systemctl is-active nginx || (echo "Nginx is not running!" && exit 1)
+            sudo systemctl is-active php8.4-fpm || (echo "PHP-FPM is not running!" && exit 1)
+
+            echo "🌐 Checking web server..."
+            curl -sSf http://localhost:8000 || (echo "Laravel server not responding!" && exit 1)
           EOF
 
-      # Optional: Upload coverage report (viewable in GitHub)
-      - name: Upload Coverage Report
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report
-          path: coverage-report/
-
-      - name: Run PHPUnit tests with coverage
+      - name: Run Tests and Generate Coverage
         shell: bash
-        continue-on-error: true
         run: |
-          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'ENDSSH'
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
             set -e
             cd ~/laravel-app
 
-            echo "Current directory: $(pwd)"
-            ls -la
-            echo "Vendor contents:"
-            ls -la vendor/bin || true
+            echo "🔍 Running tests..."
+            ./vendor/bin/pest --coverage-html=coverage-report --coverage-clover=coverage.xml
 
-            sudo chown -R $USER:$USER .
-            sudo chmod -R 755 .
-
-            echo "Installing Composer dependencies..."
-            composer install --no-interaction --no-dev --optimize-autoloader --ignore-platform-reqs
-
-            if [ ! -f vendor/bin/pest ]; then
-              echo "Pest not found! Installing Pest..."
-              composer require pestphp/pest --dev --no-interaction --ignore-platform-reqs
-              composer require pestphp/pest-plugin-laravel --dev --no-interaction --ignore-platform-reqs
-            fi
-
-            echo "Running tests..."
-            ./vendor/bin/pest --coverage-clover=coverage.xml
-
-            if [ ! -f coverage.xml ]; then
-              echo "Error: coverage.xml was not generated!"
-              exit 1
-            fi
-
+            echo "📊 Coverage results:"
             cat coverage.xml
-          ENDSSH
+          EOF
 
-          scp ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/coverage.xml ./
+      - name: Upload Coverage Reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-reports
+          path: |
+            coverage-report/
+            coverage.xml
+          retention-days: 1
+
+      - name: Verify Website Accessibility
+        run: |
+          curl -sSf http://${{ secrets.SSH_HOST }}:8000 || (echo "❌ Website is not accessible!" && exit 1)
