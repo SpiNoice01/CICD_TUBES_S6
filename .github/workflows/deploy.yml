@@ -117,6 +117,21 @@ jobs:
             echo "Laravel server started on port 8000"
           EOF
 
+      # Run tests + generate coverage
+      - name: Run Tests with Coverage
+        run: |
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
+            cd ~/laravel-app
+            ./vendor/bin/pest --coverage-html=coverage-report
+          EOF
+
+      # Optional: Upload coverage report (viewable in GitHub)
+      - name: Upload Coverage Report
+        uses: actions/upload-artifact@v3
+        with:
+          name: coverage-report
+          path: coverage-report/
+
       - name: Run PHPUnit tests with coverage
         shell: bash
         continue-on-error: true
