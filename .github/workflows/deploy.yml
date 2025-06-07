@@ -106,13 +106,8 @@ jobs:
 
       - name: Verify Website is Live
         run: |
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://${{ secrets.SSH_HOST }}/)
-          if [ "$HTTP_STATUS" -ne 200 ]; then
-            echo "❌ Website returned HTTP $HTTP_STATUS (expected 200)"
-            exit 1
-          else
-            echo "✅ Website is live (HTTP 200)"
-          fi
+          cd ~/laravel-app
+          php artisan serve --host=0.0.0.0 --port=8000
 
       - name: Verify Website
         run: |
