@@ -103,11 +103,19 @@ jobs:
             sudo systemctl is-active php8.4-fpm || (echo "PHP-FPM is not running!" && exit 1)
             echo "✅ Services are running"
           EOF
-
-      - name: Verify Website is Live
+      - name: Start Laravel Server
+        shell: bash
         run: |
-          cd ~/laravel-app
-          php artisan serve --host=0.0.0.0 --port=8000
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
+            set -e
+            cd ~/laravel-app
+            # Kill any existing process
+            sudo pkill -f "php artisan serve" || true
+            # Start Laravel in background (nohup + disown keeps it running)
+            nohup php artisan serve --host=0.0.0.0 --port=8000 > ~/laravel.log 2>&1 &
+            disown
+            echo "Laravel server started on port 8000"
+          EOF
 
       - name: Run PHPUnit tests with coverage
         shell: bash
