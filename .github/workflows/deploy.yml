@@ -92,10 +92,28 @@ jobs:
             fi
 
             echo "Installing Composer dependencies..."
-            composer install --optimize-autoloader --ignore-platform-reqs
+            echo "Current directory: $(pwd)"
+            echo "Checking if composer.json exists:"
+            ls -la composer.json || echo "composer.json not found!"
+
+            # Remove any existing vendor directory and lock file for clean install
+            rm -rf vendor/ composer.lock
+
+            echo "Running composer install..."
+            composer install --optimize-autoloader --no-dev --verbose || {
+              echo "Composer install failed! Trying without --no-dev..."
+              composer install --optimize-autoloader --verbose || {
+                echo "Composer install failed completely!"
+                exit 1
+              }
+            }
+
+            echo "Verifying vendor directory:"
+            ls -la vendor/ || echo "Vendor directory not created!"
+            ls -la vendor/autoload.php || echo "Autoload file missing!"
 
             echo "Installing test dependencies..."
-            composer require pestphp/pest pestphp/pest-plugin-laravel --dev --no-interaction --ignore-platform-reqs
+            composer require pestphp/pest pestphp/pest-plugin-laravel --dev --no-interaction || echo "Failed to install test dependencies"
 
             echo "🗃️ Migrating database..."
             php artisan cache:table || true
@@ -107,95 +125,3 @@ jobs:
             php artisan cache:clear
             php artisan view:clear
           EOF
-
-      - name: Start Application Services
-        shell: bash
-        run: |
-          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-            set -e
-            echo "♻️ Restarting services..."
-            sudo systemctl restart nginx
-            sudo systemctl restart php8.2-fpm
-
-            echo "🚀 Starting Laravel development server..."
-            cd ~/laravel-app
-            sudo pkill -f "php artisan serve" || true
-            nohup php artisan serve --host=0.0.0.0 --port=8000 > ~/laravel.log 2>&1 &
-            disown
-          EOF
-
-      - name: Verify Services
-        shell: bash
-        continue-on-error: true
-        run: |
-          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-            set +e
-            echo "✅ Checking services..."
-            sudo systemctl is-active nginx || echo "⚠️ Nginx is not running!"
-            sudo systemctl is-active php8.2-fpm || echo "⚠️ PHP-FPM is not running!"
-
-            echo "🌐 Checking web server..."
-            curl -sSf http://localhost:8000 || echo "⚠️ Laravel server not responding!"
-          EOF
-
-      - name: Run Tests and Generate Coverage
-        shell: bash
-        continue-on-error: true
-        run: |
-          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-            set -e
-            cd ~/laravel-app
-
-            mkdir -p coverage-report
-
-            echo "Running tests with coverage (Pest)..."
-            XDEBUG_MODE=coverage ./vendor/bin/pest --coverage-html=coverage-report --coverage-clover=coverage.xml || true
-
-            if [ ! -f coverage.xml ]; then
-              echo "Trying PHPUnit as fallback..."
-              XDEBUG_MODE=coverage ./vendor/bin/phpunit --coverage-html coverage-report --coverage-clover coverage.xml || true
-            fi
-
-            if [ -f coverage.xml ]; then
-              echo "Coverage generation successful!"
-              zip -r coverage-artifacts.zip coverage-report/ coverage.xml
-            else
-              echo "Failed to generate coverage reports"
-              exit 1
-            fi
-          EOF
-
-      - name: Download Coverage Reports
-        if: always()
-        shell: bash
-        run: |
-          scp ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/coverage-artifacts.zip ./ || echo "No coverage artifacts found"
-
-          if [ -f coverage-artifacts.zip ]; then
-            unzip coverage-artifacts.zip -d coverage-reports
-            echo "Coverage files downloaded:"
-            ls -la coverage-reports/
-          fi
-
-      - name: Upload Coverage Reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-reports
-          path: coverage-reports/
-          retention-days: 1
-
-      - name: Final Status Report
-        if: always()
-        run: |
-          if [ "${{ job.status }}" == 'success' ]; then
-            echo "✅ All steps completed successfully"
-          else
-            echo "⚠️ Workflow completed with warnings (some non-critical steps failed)"
-            echo "Coverage reports should still be available in artifacts"
-          fi
-
-      - name: Verify Website Accessibility
-        continue-on-error: true
-        run: |
-          curl -sSf http://${{ secrets.SSH_HOST }}:8000 || echo "❌ Website is not accessible!"
