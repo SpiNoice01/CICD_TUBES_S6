@@ -125,3 +125,130 @@ jobs:
             php artisan cache:clear
             php artisan view:clear
           EOF
+name: Deploy Laravel to Azure VM Dan Analyze with SonarCloud
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          extensions: xdebug, sqlite3
+          coverage: xdebug
+
+      - name: Install npm dependencies
+        run: npm install
+
+      - name: Build assets
+        run: npm run build
+
+      - name: Setup SSH
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          echo "Host *" > ~/.ssh/config
+          echo "  StrictHostKeyChecking no" >> ~/.ssh/config
+
+      - name: Deploy Application via rsync
+        shell: bash
+        run: |
+          rsync -avz --no-perms --no-owner --no-group --delete --delete-excluded \
+            -e "ssh -o StrictHostKeyChecking=no" \
+            --exclude='.git' \
+            --exclude='.env' \
+            --exclude='storage/*' \
+            --exclude='node_modules' \
+            ./ ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/
+
+      - name: Remote Setup & Deploy
+        shell: bash
+        run: |
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
+            set -e
+
+            cd ~/laravel-app
+
+            echo "🔧 Fixing permissions..."
+            sudo chown -R $USER:www-data storage bootstrap/cache
+            sudo chmod -R 775 storage bootstrap/cache
+
+            echo "🌱 Setting up environment..."
+            if [ ! -f .env ]; then
+              cp .env.example .env
+              php artisan key:generate
+              echo "✅ Application key generated and saved to .env"
+            else
+              echo "✅ .env already exists, skipping key generation"
+            fi
+
+            echo "📦 Installing PHP dependencies..."
+            sudo apt-get update
+            sudo apt-get install -y php-xdebug php-sqlite3 unzip curl zip
+            sudo systemctl restart php8.2-fpm
+
+            if ! command -v composer &> /dev/null; then
+              php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
+              EXPECTED_SIGNATURE=$(curl -s https://composer.github.io/installer.sig)
+              ACTUAL_SIGNATURE=$(php -r "echo hash_file('sha384', 'composer-setup.php');")
+              if [ "$EXPECTED_SIGNATURE" != "$ACTUAL_SIGNATURE" ]; then
+                echo 'ERROR: Invalid installer signature'
+                rm composer-setup.php
+                exit 1
+              fi
+              php composer-setup.php
+              sudo mv composer.phar /usr/local/bin/composer
+              sudo chmod +x /usr/local/bin/composer
+              rm composer-setup.php
+            fi
+
+            echo "Installing Composer dependencies..."
+            echo "Current directory: $(pwd)"
+            echo "Checking if composer.json exists:"
+            ls -la composer.json || echo "composer.json not found!"
+
+            # Remove any existing vendor directory and lock file for clean install
+            rm -rf vendor/ composer.lock
+
+            echo "Running composer install..."
+            composer install --optimize-autoloader --no-dev --verbose || {
+              echo "Composer install failed! Trying without --no-dev..."
+              composer install --optimize-autoloader --verbose || {
+                echo "Composer install failed completely!"
+                exit 1
+              }
+            }
+
+            echo "Verifying vendor directory:"
+            ls -la vendor/ || echo "Vendor directory not created!"
+            ls -la vendor/autoload.php || echo "Autoload file missing!"
+
+            echo "Installing test dependencies..."
+            composer require pestphp/pest pestphp/pest-plugin-laravel --dev --no-interaction || echo "Failed to install test dependencies"
+
+            echo "🗃️ Migrating database..."
+            php artisan cache:table || true
+            php artisan session:table || true
+            php artisan migrate --force
+
+            echo "🧹 Clearing caches..."
+            php artisan config:clear
+            php artisan cache:clear
+            php artisan view:clear
+          EOF
