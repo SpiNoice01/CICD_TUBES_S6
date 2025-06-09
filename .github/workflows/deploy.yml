@@ -1,4 +1,4 @@
-name: Deploy Laravel to Azure VM Dan Analyze with SonarCloudd
+name: Deploy Laravel to Azure VM Dan Analyze with SonarCloud
 
 on:
   push:
