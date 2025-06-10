@@ -81,36 +81,50 @@ jobs:
         run: |
           ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'NGINX_EOF'
           set -e
+          # Backup original nginx.conf
+          sudo cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.bak
+
+          # Create new Laravel site configuration
           sudo bash -c 'cat > /etc/nginx/sites-available/laravel << "EOL"
           server {
-          listen 80;
-          server_name _;
-          root /home/$USER/laravel-app/public;
-          index index.php index.html index.htm;
+              listen 80;
+              server_name _;
+              root /home/${{ secrets.SSH_USERNAME }}/laravel-app/public;
+              index index.php index.html index.htm;
 
-          location / {
-              try_files \$uri \$uri/ /index.php?\$query_string;
-          }
+              location / {
+                  try_files \$uri \$uri/ /index.php?\$query_string;
+              }
 
-          location ~ \.php$ {
-              include snippets/fastcgi-php.conf;
-              fastcgi_pass unix:/run/php/php8.2-fpm.sock;
-          }
+              location ~ \.php$ {
+                  include snippets/fastcgi-php.conf;
+                  fastcgi_pass unix:/run/php/php8.2-fpm.sock;
+                  fastcgi_param SCRIPT_FILENAME \$realpath_root\$fastcgi_script_name;
+                  include fastcgi_params;
+              }
 
-          location ~ /\.ht {
-              deny all;
-          }
+              location ~ /\.ht {
+                  deny all;
+              }
           }
           EOL'
 
-          # Enable Nginx configuration
+          # Enable the site
           sudo ln -sf /etc/nginx/sites-available/laravel /etc/nginx/sites-enabled/
           sudo rm -f /etc/nginx/sites-enabled/default
 
-          # Test Nginx config
+          # Test configuration
           sudo nginx -t
-
           NGINX_EOF
+
+      - name: Verify Nginx Configuration
+        shell: bash
+        run: |
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
+          set -e
+          echo "Checking Nginx configuration..."
+          sudo nginx -T  # This shows the full configuration for debugging
+          EOF
       - name: Remote Setup & Deploy
         shell: bash
         run: |
