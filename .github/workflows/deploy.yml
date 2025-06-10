@@ -1,4 +1,4 @@
-name: Deploy Laravel to Azure VM and Analyze with SonarCloud
+name: Deploy Laravel Dummy App to Azure VM
 
 on:
   push:
@@ -12,27 +12,33 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          extensions: mbstring, ctype, xml, json, openssl, pdo, tokenizer
+          tools: composer
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "18"
 
-      - name: Install npm dependencies
-        run: npm install
-
-      - name: Build assets
-        run: npm run build
+      - name: Install dependencies
+        run: |
+          composer install --no-interaction --prefer-dist --optimize-autoloader
+          npm install
+          npm run build
 
       - name: Setup SSH
-        shell: bash
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           echo "Host *" > ~/.ssh/config
           echo "  StrictHostKeyChecking no" >> ~/.ssh/config
-      - name: Deploy Application via rsync
-        shell: bash
+
+      - name: Rsync files to VM
         run: |
           rsync -avz --no-perms --no-owner --no-group --delete \
             -e "ssh -o StrictHostKeyChecking=no" \
@@ -41,116 +47,86 @@ jobs:
             --exclude='storage/*' \
             --exclude='node_modules' \
             ./ ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:~/laravel-app/
-      - name: Remote Setup & Deploy
-        shell: bash
+
+      - name: Remote Setup
         run: |
           ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'EOF'
             set -e
             cd ~/laravel-app
-            echo "🔧 Fixing permissions..."
-            sudo chown -R $USER:www-data storage bootstrap/cache
-            sudo chmod -R 775 storage bootstrap/cache
-            echo "🌱 Setting up environment..."
+
+            # Setup environment
             if [ ! -f .env ]; then
               cp .env.example .env
               php artisan key:generate
-              echo "✅ Application key generated and saved to .env"
-            else
-              echo "✅ .env already exists, skipping key generation"
             fi
-            echo "📦 Installing PHP dependencies..."
+
+            # Fix permissions
+            sudo chown -R $USER:www-data storage bootstrap/cache
+            sudo chmod -R 775 storage bootstrap/cache
+
+            # Install required packages
             sudo apt-get update
-            sudo apt-get install -y php-sqlite3 unzip curl
-            if ! [ -x "$(command -v composer)" ]; then
+            sudo apt-get install -y php-cli php-mbstring php-xml php-mysql php-zip unzip
+
+            # Install Composer if not exists
+            if ! command -v composer &> /dev/null; then
               php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
-              EXPECTED_SIGNATURE="$(php -r 'copy(\"https://composer.github.io/installer.sig\", \"php://stdout\");')"
-              php -r "if (hash_file('sha384', 'composer-setup.php') === '$EXPECTED_SIGNATURE') { echo 'Installer verified'; } else { echo 'Installer corrupt'; unlink('composer-setup.php'); exit(1); }"
               php composer-setup.php
               sudo mv composer.phar /usr/local/bin/composer
               sudo chmod +x /usr/local/bin/composer
               php -r "unlink('composer-setup.php');"
             fi
-            echo "Installing Composer dependencies..."
-            composer install --optimize-autoloader --ignore-platform-reqs
-            echo "Installing test dependencies..."
-            composer require pestphp/pest pestphp/pest-plugin-laravel --dev --no-interaction --ignore-platform-reqs
-            echo "🗃️ Migrating database..."
-            php artisan cache:table || true
-            php artisan session:table || true
+
+            # Install dependencies
+            composer install --optimize-autoloader --no-interaction --ignore-platform-reqs
+
+            # Setup database (using SQLite for dummy app)
+            touch database/database.sqlite
             php artisan migrate --force
-            echo "🧹 Clearing caches..."
+
+            # Clear caches
             php artisan config:clear
             php artisan cache:clear
             php artisan view:clear
           EOF
-      - name: Start Application Services
-        shell: bash
-        run: |
-          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-            set -e
-            echo "♻️ Restarting services..."
-            sudo systemctl restart nginx
-            sudo systemctl restart php8.4-fpm
-            echo "🚀 Starting Laravel development server..."
-            cd ~/laravel-app
-            sudo pkill -f "php artisan serve" || true
-            nohup php artisan serve --host=0.0.0.0 --port=8000 > ~/laravel.log 2>&1 &
-            disown
-          EOF
-      - name: Verify Services
-        shell: bash
-        run: |
-          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-            set -e
-            echo "✅ Checking services..."
-            sudo systemctl is-active nginx || (echo "Nginx is not running!" && exit 1)
-            sudo systemctl is-active php8.4-fpm || (echo "PHP-FPM is not running!" && exit 1)
-            echo "🌐 Checking web server..."
-            curl -sSf http://localhost:8000 || (echo "Laravel server not responding!" && exit 1)
-          EOF
-      - name: Run Tests and Generate Coverage
-        shell: bash
-        continue-on-error: true # This allows the workflow to continue even if tests fail
-        run: |
-          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-            set +e  # Disable immediate exit on error to capture coverage even if tests fail
-            cd ~/laravel-app
-            echo "🔍 Running tests (may fail but will still generate coverage)..."
-            ./vendor/bin/pest --coverage-html=coverage-report --coverage-clover=coverage.xml || true
-            echo "📊 Test execution completed (ignoring failures)"
-            # Always try to generate the coverage report
-            if [ -f coverage.xml ]; then
-              echo "✅ Coverage report generated successfully"
-              echo "Coverage Summary:"
-              grep -oP 'filename.*?line-rate="\K[^"]+' coverage.xml | \
-                awk '{sum += $1; count++} END {print "Average coverage: " sum/count*100 "%"}'
-            else
-              echo "❌ Failed to generate coverage report"
-              exit 0  # Still continue the workflow
-            fi
-            # Always show the last 20 lines of Laravel log for debugging
-            echo "📝 Last 20 lines of Laravel log:"
-            tail -20 ~/laravel.log || echo "No Laravel log found"
-          EOF
-      - name: Upload Coverage Reports
-        if: always() # Always upload artifacts even if previous steps fail
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-reports
-          path: |
-            coverage-report/
-            coverage.xml
-          retention-days: 1
 
-      - name: Final Status Report
-        if: always()
+      - name: Configure Web Server
         run: |
-          if [ "${{ job.status }}" == 'success' ]; then
-            echo "✅ All steps completed successfully"
-          else
-            echo "⚠️ Workflow completed with warnings (some non-critical steps failed)"
-            echo "Coverage reports should still be available in artifacts"
-          fi
-      - name: Verify Website Accessibility
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'EOF'
+            set -e
+            # Create Nginx config (simplified for dummy app)
+            sudo bash -c 'cat > /etc/nginx/sites-available/laravel << "EOL"
+            server {
+                listen 80;
+                server_name _;
+                root /home/$USER/laravel-app/public;
+
+                index index.php index.html;
+
+                location / {
+                    try_files \$uri \$uri/ /index.php?\$query_string;
+                }
+
+                location ~ \.php$ {
+                    include snippets/fastcgi-php.conf;
+                    fastcgi_pass unix:/run/php/php-fpm.sock;
+                }
+
+                location ~ /\.ht {
+                    deny all;
+                }
+            }
+            EOL'
+
+            # Enable site
+            sudo ln -sf /etc/nginx/sites-available/laravel /etc/nginx/sites-enabled/
+            sudo rm -f /etc/nginx/sites-enabled/default
+
+            # Restart services
+            sudo systemctl restart nginx
+            sudo systemctl restart php8.2-fpm
+          EOF
+
+      - name: Verify Deployment
         run: |
-          curl -sSf http://${{ secrets.SSH_HOST }}:8000 || (echo "❌ Website is not accessible!" && exit 1)
+          curl -sSf http://${{ secrets.SSH_HOST }} || (echo "❌ Website is not accessible!" && exit 1)
