@@ -89,7 +89,7 @@ jobs:
 
             cd ~/laravel-app
             sudo pkill -f "php artisan serve" || true
-            nohup php artisan serve --host=0.0.0.0 --port=8000 > ~/laravel.log 2>&1 &
+            nohup php artisan serve --host=0.0.0.0 --port=8080 > ~/laravel.log 2>&1 &
             disown
           EOF
 
@@ -156,4 +156,4 @@ jobs:
 
       - name: Verify Website Accessibility
         run: |
-          curl -sSf http://${{ secrets.SSH_HOST }}:8000 || (echo "❌ Website is not accessible!" && exit 1)
+          curl -sSf http://${{ secrets.SSH_HOST }}:8080 || (echo "❌ Website is not accessible!" && exit 1)
