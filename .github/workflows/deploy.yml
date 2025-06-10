@@ -44,6 +44,16 @@ jobs:
             --include='public/build/' \
             ./ ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/
 
+      - name: Restart Services
+        shell: bash
+        run: |
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
+            set -e
+            echo "♻️ Restarting services..."
+            sudo systemctl restart nginx
+            sudo systemctl restart php8.2-fpm
+          EOF
+
       - name: Remote Setup & Deploy
         shell: bash
         run: |
