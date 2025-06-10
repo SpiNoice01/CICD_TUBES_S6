@@ -47,9 +47,11 @@ jobs:
           ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
             set -e
             cd ~/laravel-app
+
             echo "🔧 Fixing permissions..."
             sudo chown -R $USER:www-data storage bootstrap/cache
             sudo chmod -R 775 storage bootstrap/cache
+
             echo "🌱 Setting up environment..."
             if [ ! -f .env ]; then
               cp .env.example .env
@@ -58,6 +60,7 @@ jobs:
             else
               echo "✅ .env already exists, skipping key generation"
             fi
+
             echo "📦 Installing PHP dependencies..."
             sudo apt-get update
             sudo apt-get install -y php-sqlite3 unzip curl
@@ -70,10 +73,12 @@ jobs:
               sudo chmod +x /usr/local/bin/composer
               php -r "unlink('composer-setup.php');"
             fi
+
             echo "Installing Composer dependencies..."
             composer install --optimize-autoloader --ignore-platform-reqs
             echo "Installing test dependencies..."
             composer require pestphp/pest pestphp/pest-plugin-laravel --dev --no-interaction --ignore-platform-reqs
+
             echo "🗃️ Migrating database..."
             php artisan cache:table || true
             php artisan session:table || true
