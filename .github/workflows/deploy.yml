@@ -7,33 +7,48 @@ on:
 
 jobs:
   deploy:
-    name: Deploy Laravel to Azure VM
+    name: Deploy Laravel ke Azure VM Baru
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Set up SSH key
+      - name: Setup SSH key
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
+          echo "🔐 Menyiapkan SSH key..."
+          mkdir -p $HOME/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > $HOME/.ssh/id_rsa
+          chmod 600 $HOME/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> $HOME/.ssh/known_hosts
 
-      - name: Upload Laravel App to Server via rsync
+      - name: Upload Laravel App ke VM via rsync
         run: |
-          rsync -avz --exclude=".git" --exclude="node_modules" ./ ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/var/www/html/laravel-app
+          echo "🚀 Upload project ke server..."
+          rsync -avz --exclude=".git" --exclude="node_modules" ./ ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/var/www/laravel-app
 
-      - name: Run Laravel Commands on Server
+      - name: Jalankan Perintah Laravel di Server
         run: |
+          echo "🔧 Setup Laravel di server..."
           ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-            cd /var/www/html/laravel-app
+            cd /var/www/laravel-app
+
+            # Jika belum, install composer
+            if ! command -v composer &> /dev/null
+            then
+              echo "Composer tidak ditemukan, menginstall..."
+              curl -sS https://getcomposer.org/installer | php
+              sudo mv composer.phar /usr/local/bin/composer
+            fi
+
+            # Jalankan perintah Laravel
             composer install --no-dev --optimize-autoloader
             php artisan migrate --force
             php artisan config:cache
             php artisan route:cache
             php artisan view:cache
+
+            # Permission
             sudo chown -R www-data:www-data .
             sudo chmod -R 775 storage bootstrap/cache
           EOF
