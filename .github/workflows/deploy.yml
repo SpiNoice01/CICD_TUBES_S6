@@ -32,6 +32,9 @@ jobs:
           echo "Host *" > ~/.ssh/config
           echo "  StrictHostKeyChecking no" >> ~/.ssh/config
 
+      - name: Test SSH Connection
+        run: ssh -o StrictHostKeyChecking=no Agile@172.203.81.83 "echo 'SSH connection successful'"
+
       - name: Deploy Application via rsync
         shell: bash
         run: |
