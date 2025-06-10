@@ -43,58 +43,91 @@ jobs:
             --exclude='node_modules' \
             --include='public/build/' \
             ./ ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/
+
       - name: Remote Setup & Deploy
         shell: bash
         run: |
           ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-            set -e
-            cd ~/laravel-app
+          set -e
+          cd ~/laravel-app
 
-            mkdir -p storage/framework/{cache,sessions,views}
-            mkdir -p bootstrap/cache
+          # Create required directories
+          echo "📂 Creating required directories..."
+          mkdir -p storage/framework/{cache,sessions,views}
+          mkdir -p bootstrap/cache
 
+          # Fix permissions (pre-composer)
+          echo "🔧 Setting initial permissions..."
+          sudo chown -R $USER:www-data storage bootstrap/cache
+          sudo chmod -R 775 storage bootstrap/cache
 
-            echo "🔧 Fixing permissions..."
-            sudo chown -R $USER:www-data storage bootstrap/cache
-            sudo chmod -R 775 storage bootstrap/cache
+          # Install system dependencies
+          echo "📦 Installing system dependencies..."
+          sudo apt-get update
+          sudo apt-get install -y php-sqlite3 unzip curl php-mbstring php-xml
 
-            php artisan storage:link
+          # Install Composer if missing
+          if ! command -v composer &> /dev/null; then
+            echo "⬇️ Downloading Composer..."
+            php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
+            EXPECTED_SIGNATURE=$(php -r "copy('https://composer.github.io/installer.sig', 'php://stdout');")
+            ACTUAL_SIGNATURE=$(php -r "echo hash_file('sha384', 'composer-setup.php');")
 
-            echo "🌱 Setting up environment..."
-            if [ ! -f .env ]; then
-              cp .env.example .env
-              php artisan key:generate
-              echo "✅ Application key generated and saved to .env"
-            else
-              echo "✅ .env already exists, skipping key generation"
+            if [ "$EXPECTED_SIGNATURE" != "$ACTUAL_SIGNATURE" ]; then
+              >&2 echo "❌ Composer installer corrupt"
+              rm -f composer-setup.php
+              exit 1
             fi
 
-            echo "📦 Installing PHP dependencies..."
-            sudo apt-get update
-            sudo apt-get install -y php-sqlite3 unzip curl
-            if ! [ -x "$(command -v composer)" ]; then
-              php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
-              EXPECTED_SIGNATURE="$(php -r 'copy(\"https://composer.github.io/installer.sig\", \"php://stdout\");')"
-              php -r "if (hash_file('sha384', 'composer-setup.php') === '$EXPECTED_SIGNATURE') { echo 'Installer verified'; } else { echo 'Installer corrupt'; unlink('composer-setup.php'); exit(1); }"
-              php composer-setup.php
-              sudo mv composer.phar /usr/local/bin/composer
-              sudo chmod +x /usr/local/bin/composer
-              php -r "unlink('composer-setup.php');"
-            fi
+            php composer-setup.php
+            sudo mv composer.phar /usr/local/bin/composer
+            sudo chmod +x /usr/local/bin/composer
+            rm -f composer-setup.php
+            echo "✅ Composer installed successfully"
+          fi
 
-            echo "Installing Composer dependencies..."
-            composer install --optimize-autoloader --ignore-platform-reqs
-            echo "Installing test dependencies..."
-            composer require pestphp/pest pestphp/pest-plugin-laravel --dev --no-interaction --ignore-platform-reqs
+          # Handle environment file
+          echo "🌱 Setting up environment..."
+          if [ ! -f .env ]; then
+            cp .env.example .env
+            echo "✅ Created .env from example"
+          else
+            echo "ℹ️ .env already exists"
+          fi
 
-            echo "🗃️ Migrating database..."
-            php artisan cache:table || true
-            php artisan session:table || true
-            php artisan migrate --force
-            echo "🧹 Clearing caches..."
-            php artisan config:clear
-            php artisan cache:clear
-            php artisan view:clear
+          # Install Composer dependencies (without dev dependencies first)
+          echo "📦 Installing production dependencies..."
+          composer install --no-dev --optimize-autoloader --no-interaction
+
+          # Generate application key if not set
+          if ! grep -q '^APP_KEY=base64:' .env; then
+            php artisan key:generate
+            echo "🔑 Generated application key"
+          fi
+
+          # Install dev dependencies only if needed
+          echo "🧪 Installing test dependencies..."
+          composer require pestphp/pest pestphp/pest-plugin-laravel --dev --no-interaction
+
+          # Run database migrations
+          echo "🗃️ Migrating database..."
+          php artisan migrate --force
+
+          # Fix permissions again (post-composer)
+          echo "🔧 Finalizing permissions..."
+          sudo chown -R $USER:www-data storage bootstrap/cache vendor
+          sudo chmod -R 775 storage bootstrap/cache
+
+          # Create storage link
+          php artisan storage:link
+
+          # Optimize application
+          echo "⚡ Optimizing application..."
+          php artisan config:cache
+          php artisan route:cache
+          php artisan view:cache
+
+          echo "🎉 Deployment setup completed successfully!"
           EOF
 
       - name: Build assets
