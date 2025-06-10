@@ -78,9 +78,7 @@ jobs:
             echo "📦 Installing Composer dependencies..."
             composer install --optimize-autoloader --ignore-platform-reqs
             echo "🗃️ Migrating database..."
-            php artisan cache:table || true
-            php artisan session:table || true
-            php artisan migrate --force
+            php artisan migrate:fresh --force
             echo "🧹 Clearing caches..."
             php artisan config:clear
             php artisan cache:clear
