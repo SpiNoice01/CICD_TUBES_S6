@@ -56,42 +56,43 @@ jobs:
             composer --version || (echo "❌ Composer installation failed!" && exit 1)
           EOF
 
-      - name: Remote Setup & Deploy
-        shell: bash
-        run: |
-          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-            set -e
-            echo "🔧 Fixing permissions..."
-            sudo apt update
-            sudo apt install -y php php-cli php-mbstring php-xml php-zip php-mysql php-sqlite3
-            cd ~/laravel-app
-            sudo chown -R $USER:www-data storage bootstrap/cache
-            sudo chmod -R 775 storage bootstrap/cache
-            echo "🌱 Setting up environment..."
-            if [ ! -f .env ]; then
-              cp .env.example .env
-              php artisan key:generate
-              echo "✅ Application key generated and saved to .env"
-            else
-              echo "✅ .env already exists, skipping key generation"
-            fi
-            echo "📦 Creating SQLite database file..."
-            if [ ! -f database/database.sqlite ]; then
-              mkdir -p database
-              touch database/database.sqlite
-              echo "✅ SQLite database file created"
-            else
-              echo "✅ SQLite database file already exists"
-            fi
-            echo "📦 Installing Composer dependencies..."
-            composer install --optimize-autoloader --ignore-platform-reqs
-            echo "🗃️ Migrating database..."
-            php artisan migrate:fresh --force
-            echo "🧹 Clearing caches..."
-            php artisan config:clear
-            php artisan cache:clear
-            php artisan view:clear
-          EOF
+          - name: Remote Setup & Deploy
+          shell: bash
+          run: |
+            ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
+              set -e
+              echo "🔧 Fixing permissions..."
+              sudo apt update
+              sudo apt install -y php php-cli php-mbstring php-xml php-zip php-mysql php-sqlite3
+              cd ~/laravel-app
+              sudo chown -R $USER:www-data storage bootstrap/cache
+              sudo chmod -R 775 storage bootstrap/cache
+              echo "🌱 Setting up environment..."
+              if [ ! -f .env ]; then
+                cp .env.example .env
+                php artisan key:generate
+                echo "✅ Application key generated and saved to .env"
+              else
+                echo "✅ .env already exists, skipping key generation"
+              fi
+              echo "📦 Creating SQLite database file..."
+              if [ ! -f database/database.sqlite ]; then
+                mkdir -p database
+                touch database/database.sqlite
+                echo "✅ SQLite database file created"
+              else
+                echo "✅ SQLite database file already exists"
+              fi
+              echo "📦 Installing Composer dependencies..."
+              composer install --optimize-autoloader --ignore-platform-reqs
+              echo "🗃️ Migrating database..."
+              php artisan migrate:fresh --force
+              echo "🧹 Clearing caches..."
+              mkdir -p storage/framework/views   # <--- Tambahan penting
+              php artisan config:clear
+              php artisan cache:clear
+              php artisan view:clear
+            EOF
 
       - name: Update System and Install Dependencies
         shell: bash
