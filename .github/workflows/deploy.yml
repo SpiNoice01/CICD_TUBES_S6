@@ -66,6 +66,10 @@ jobs:
 
             cd ~/laravel-app
 
+            echo "📦 Installing npm dependencies..."
+            npm ci
+            npm install
+
             echo "🔧 Fixing permissions..."
             sudo chown -R $USER:www-data storage bootstrap/cache
             sudo chmod -R ug+rwx storage bootstrap/cache
