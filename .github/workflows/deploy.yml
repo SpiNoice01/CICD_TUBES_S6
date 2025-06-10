@@ -63,7 +63,7 @@ jobs:
             set -e
             echo "🔧 Fixing permissions..."
             sudo apt update
-            sudo apt install -y php php-cli php-mbstring php-xml php-zip
+            sudo apt install -y php php-cli php-mbstring php-xml php-zip php-mysql
             cd ~/laravel-app
             sudo chown -R $USER:www-data storage bootstrap/cache
             sudo chmod -R 775 storage bootstrap/cache
