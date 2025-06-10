@@ -48,8 +48,10 @@ jobs:
         run: |
           ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
             set -e
-            cd ~/laravel-app
             echo "🔧 Fixing permissions..."
+            sudo apt update
+            sudo apt install -y php php-cli php-mbstring php-xml php-zip
+            cd ~/laravel-app
             sudo chown -R $USER:www-data storage bootstrap/cache
             sudo chmod -R 775 storage bootstrap/cache
             echo "🌱 Setting up environment..."
@@ -58,24 +60,10 @@ jobs:
               php artisan key:generate
               echo "✅ Application key generated and saved to .env"
             else
-              echo "✅ .env already, exists skipping key generation"
+              echo "✅ .env already exists, skipping key generation"
             fi
-            echo "📦 Installing PHP dependencies..."
-            sudo apt-get update
-            sudo apt-get install -y php-sqlite3 unzip curl
-            if ! [ -x "$(command -v composer)" ]; then
-              php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
-              EXPECTED_SIGNATURE="$(php -r 'copy(\"https://composer.github.io/installer.sig\", \"php://stdout\");')"
-              php -r "if (hash_file('sha384', 'composer-setup.php') === '$EXPECTED_SIGNATURE') { echo 'Installer verified'; } else { echo 'Installer corrupt'; unlink('composer-setup.php'); exit(1); }"
-              php composer-setup.php
-              sudo mv composer.phar /usr/local/bin/composer
-              sudo chmod +x /usr/local/bin/composer
-              php -r "unlink('composer-setup.php');"
-            fi
-            echo "Installing Composer dependencies..."
+            echo "📦 Installing Composer dependencies..."
             composer install --optimize-autoloader --ignore-platform-reqs
-            echo "Installing test dependencies..."
-            composer require pestphp/pest pestphp/pest-plugin-laravel --dev --no-interaction --ignore-platform-reqs
             echo "🗃️ Migrating database..."
             php artisan cache:table || true
             php artisan session:table || true
