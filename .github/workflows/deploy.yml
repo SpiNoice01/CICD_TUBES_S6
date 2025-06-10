@@ -32,6 +32,12 @@ jobs:
           echo "Host *" > ~/.ssh/config
           echo "  StrictHostKeyChecking no" >> ~/.ssh/config
 
+      - name: Debug SSH Key
+        shell: bash
+        run: |
+          echo "Loaded SSH key:"
+          cat ~/.ssh/id_rsa
+
       - name: Deploy Application via rsync
         shell: bash
         run: |
