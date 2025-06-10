@@ -43,6 +43,19 @@ jobs:
             --exclude='node_modules' \
             ./ ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/
 
+      - name: Install Composer on Remote Server
+        shell: bash
+        run: |
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
+            set -e
+            echo "🔧 Installing Composer..."
+            sudo apt update
+            sudo apt install -y curl php-cli unzip
+            curl -sS https://getcomposer.org/installer | php
+            sudo mv composer.phar /usr/local/bin/composer
+            composer --version || (echo "❌ Composer installation failed!" && exit 1)
+          EOF
+
       - name: Remote Setup & Deploy
         shell: bash
         run: |
