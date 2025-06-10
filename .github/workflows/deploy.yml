@@ -104,17 +104,19 @@ jobs:
         run: |
           ssh -i ~/.ssh/id_rsa ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
             set -e
-            echo "📦 Ensuring nginx is installed..."
-            sudo apt-get update
-            sudo apt-get install -y nginx
+            echo "🚀 Starting Laravel dev server and Vite..."
 
-            echo "♻️ Restarting nginx..."
-            sudo systemctl restart nginx
-
-            echo "🚀 Running Laravel dev server..."
             cd ~/laravel-app
+
+            # Stop previous Laravel dev server (if any)
             sudo pkill -f "php artisan serve" || true
             nohup php artisan serve --host=0.0.0.0 --port=8000 > ~/laravel.log 2>&1 &
+
+            # Stop previous Vite dev server (if any)
+            sudo pkill -f "vite" || true
+            nohup npm run dev > ~/vite.log 2>&1 &
+
+            echo "✅ Laravel and Vite are running in the background."
           EOF
 
       - name: Verify Services
