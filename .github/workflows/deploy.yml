@@ -49,9 +49,14 @@ jobs:
           ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
             set -e
             cd ~/laravel-app
+            echo "🔧 Installing PHP if needed..."
+            sudo apt-get update
+            sudo apt-get install -y php php-cli php-fpm php-mbstring php-xml php-curl php-zip php-sqlite3 unzip curl
+
             echo "🔧 Fixing permissions..."
             sudo chown -R $USER:www-data storage bootstrap/cache
             sudo chmod -R 775 storage bootstrap/cache
+
             echo "🌱 Setting up environment..."
             if [ ! -f .env ]; then
               cp .env.example .env
@@ -61,9 +66,7 @@ jobs:
               echo "✅ .env already exists, skipping key generation"
             fi
 
-            echo "📦 Installing PHP dependencies..."
-            sudo apt-get update
-            sudo apt-get install -y php-sqlite3 unzip curl
+            echo "📦 Installing Composer if needed..."
             if ! [ -x "$(command -v composer)" ]; then
               php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
               EXPECTED_SIGNATURE="$(curl -s https://composer.github.io/installer.sig)"
@@ -92,7 +95,6 @@ jobs:
             php artisan config:clear
             php artisan cache:clear
 
-            # Ensure view cache path exists
             mkdir -p storage/framework/views
             chmod -R 775 storage/framework/views
             php artisan view:clear || echo "⚠️ View path not found. Skipping view:clear."
@@ -105,27 +107,25 @@ jobs:
             set -e
             echo "♻️ Restarting services..."
 
-            # Avoid interactive prompts during install
-            export DEBIAN_FRONTEND=noninteractive
-            sudo apt update
-            sudo apt install -y nginx
-
-            echo "🔁 Testing Nginx config..."
-            if sudo nginx -t; then
-              echo "✅ Nginx config OK. Enabling service..."
-              sudo systemctl enable nginx
-              sudo systemctl restart nginx
+            # Restart nginx, show error log if failed
+            if ! sudo systemctl restart nginx; then
+              echo "❌ Nginx restart failed! Showing status and error log:"
+              sudo systemctl status nginx || true
+              sudo tail -40 /var/log/nginx/error.log || true
             else
-              echo "❌ Nginx config has errors. Skipping service restart."
+              echo "✅ Nginx restarted."
             fi
+
+            # Restart PHP-FPM (try common versions)
+            sudo systemctl restart php8.3-fpm || \
+            sudo systemctl restart php8.2-fpm || \
+            sudo systemctl restart php8.1-fpm || \
+            sudo systemctl restart php-fpm || \
+            echo "⚠️ PHP-FPM restart skipped (adjust version)"
 
             echo "🚀 Starting Laravel development server..."
             cd ~/laravel-app
-
-            # Kill old Laravel dev server if exists
             sudo pkill -f "php artisan serve" || true
-
-            # Start Laravel dev server in background
             nohup php artisan serve --host=0.0.0.0 --port=8000 > ~/laravel.log 2>&1 &
             disown
           EOF
@@ -137,7 +137,11 @@ jobs:
             set -e
             echo "✅ Checking services..."
             sudo systemctl is-active nginx || (echo "Nginx is not running!" && exit 1)
-            sudo systemctl is-active php8.4-fpm || (echo "PHP-FPM is not running!" && exit 1)
+            sudo systemctl is-active php8.3-fpm || \
+            sudo systemctl is-active php8.2-fpm || \
+            sudo systemctl is-active php8.1-fpm || \
+            sudo systemctl is-active php-fpm || \
+            (echo "PHP-FPM is not running!" && exit 1)
             echo "🌐 Checking web server..."
             curl -sSf http://localhost:8000 || (echo "Laravel server not responding!" && exit 1)
           EOF
