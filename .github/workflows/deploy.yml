@@ -126,6 +126,12 @@ jobs:
 
             cd ~/laravel-app
 
+            # Increase file watcher limit
+            echo "🔧 Increasing file watcher limit..."
+            echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.conf
+            echo fs.inotify.max_user_instances=1024 | sudo tee -a /etc/sysctl.conf
+            sudo sysctl -p
+
             # Stop previous Laravel dev server (if any)
             sudo pkill -f "php artisan serve" || true
             nohup php artisan serve --host=0.0.0.0 --port=8080 > ~/laravel.log 2>&1 &
