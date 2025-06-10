@@ -1,12 +1,19 @@
-name: Deploy Laravel to Azure VM and Analyze with SonarCloud
+name: Deploy Laravel to Azure VM with SonarCloud Analysis
 
 on:
   push:
     branches: [main]
 
+env:
+  APP_DIR: ~/laravel-app
+  PHP_VERSION: 8.2
+  DB_NAME: laravel_app
+  DB_USER: laravel_user
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Checkout code
@@ -16,14 +23,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "18"
+          cache: "npm"
 
-      - name: Install npm dependencies
-        run: npm install
+      - name: Install and build assets
+        run: |
+          npm ci --no-audit
+          npm run build --if-present
 
-      - name: Build assets
-        run: npm run build
-
-      - name: Setup SSH
+      - name: Configure SSH
         shell: bash
         run: |
           mkdir -p ~/.ssh
@@ -31,78 +38,93 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Test SSH Connection
+      - name: Validate SSH connection
         shell: bash
         run: |
-          ssh -o ConnectTimeout=10 ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "echo 'SSH connection successful'"
+          if ! ssh -o ConnectTimeout=10 ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "echo 'SSH connection established'"; then
+            echo "::error::Failed to establish SSH connection"
+            exit 1
+          fi
 
-      - name: Prepare Remote Environment
+      - name: Prepare server environment
         shell: bash
         run: |
-          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-          set -e
-          echo "🔧 Updating system and installing base packages..."
-          sudo apt update && sudo apt upgrade -y
-          sudo apt install -y software-properties-common curl unzip git
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOSSH'
+          set -euo pipefail
 
-          # Add PHP repository
+          echo "🛠️ Updating system packages..."
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -qq
+
+          echo "📦 Installing required packages..."
+          sudo apt-get install -y -qq \
+            software-properties-common \
+            curl \
+            unzip \
+            git \
+            nginx \
+            mysql-server
+
+          echo "➕ Adding PHP repository..."
           sudo add-apt-repository -y ppa:ondrej/php
-          sudo apt update
+          sudo apt-get update -qq
 
-          # Install PHP and required extensions
-          sudo apt install -y \
-            php8.2 \
-            php8.2-fpm \
-            php8.2-cli \
-            php8.2-common \
-            php8.2-mysql \
-            php8.2-zip \
-            php8.2-gd \
-            php8.2-mbstring \
-            php8.2-curl \
-            php8.2-xml \
-            php8.2-bcmath \
-            php8.2-sqlite3 \
-            nginx
+          echo "🐘 Installing PHP and extensions..."
+          sudo apt-get install -y -qq \
+            php${{ env.PHP_VERSION }} \
+            php${{ env.PHP_VERSION }}-fpm \
+            php${{ env.PHP_VERSION }}-cli \
+            php${{ env.PHP_VERSION }}-common \
+            php${{ env.PHP_VERSION }}-mysql \
+            php${{ env.PHP_VERSION }}-zip \
+            php${{ env.PHP_VERSION }}-gd \
+            php${{ env.PHP_VERSION }}-mbstring \
+            php${{ env.PHP_VERSION }}-curl \
+            php${{ env.PHP_VERSION }}-xml \
+            php${{ env.PHP_VERSION }}-bcmath \
+            php${{ env.PHP_VERSION }}-sqlite3
 
-          # Install Composer
-          if ! command -v composer &> /dev/null; then
-            curl -sS https://getcomposer.org/installer | php
+          if ! command -v composer &>/dev/null; then
+            echo "🎼 Installing Composer..."
+            curl -sS https://getcomposer.org/installer | php -- --quiet
             sudo mv composer.phar /usr/local/bin/composer
             sudo chmod +x /usr/local/bin/composer
           fi
 
-          # Install MySQL Server
-          sudo apt install -y mysql-server
-          sudo systemctl start mysql
-          sudo systemctl enable mysql
-          EOF
+          echo "✅ Server environment prepared"
+          EOSSH
 
-      - name: Configure MySQL Database
+      - name: Configure MySQL
         shell: bash
         run: |
-          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-          set -e
-          echo "🔧 Configuring MySQL database..."
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOSSH'
+          set -euo pipefail
 
-          # Create database and user
-          sudo mysql << MYSQL_SCRIPT
-          CREATE DATABASE IF NOT EXISTS laravel_app;
-          CREATE USER IF NOT EXISTS 'laravel_user'@'localhost' IDENTIFIED BY '${{ secrets.DB_PASSWORD }}';
-          GRANT ALL PRIVILEGES ON laravel_app.* TO 'laravel_user'@'localhost';
+          echo "🗃️ Configuring MySQL database..."
+          sudo mysql << 'EOMYSQL'
+          CREATE DATABASE IF NOT EXISTS ${{ env.DB_NAME }} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+          CREATE USER IF NOT EXISTS '${{ env.DB_USER }}'@'localhost' IDENTIFIED BY '${{ secrets.DB_PASSWORD }}';
+          GRANT ALL PRIVILEGES ON ${{ env.DB_NAME }}.* TO '${{ env.DB_USER }}'@'localhost';
           FLUSH PRIVILEGES;
-          MYSQL_SCRIPT
+          EOMYSQL
 
-          echo "✅ MySQL database configured"
-          EOF
+          echo "🔒 Securing MySQL installation..."
+          sudo mysql_secure_installation << 'EOSECURE'
+          n
+          n
+          n
+          y
+          y
+          y
+          EOSECURE
 
-      - name: Deploy Application Files
+          echo "✅ MySQL configuration complete"
+          EOSSH
+
+      - name: Deploy application files
         shell: bash
         run: |
-          # Create application directory if it doesn't exist
-          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "mkdir -p ~/laravel-app"
-
-          # Deploy files using rsync
+          echo "🚚 Deploying application files..."
           rsync -avz --delete \
             -e "ssh -o StrictHostKeyChecking=no" \
             --exclude='.git' \
@@ -115,285 +137,207 @@ jobs:
             --exclude='vendor' \
             --exclude='coverage-report' \
             --exclude='coverage.xml' \
-            ./ ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/
+            ./ ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:${{ env.APP_DIR }}/
 
-      - name: Configure Laravel Application
+      - name: Setup Laravel application
         shell: bash
         run: |
-          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-          set -e
-          cd ~/laravel-app
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOSSH'
+          set -euo pipefail
+          cd ${{ env.APP_DIR }}
 
-          echo "🔧 Setting up Laravel environment..."
-
-          # Always create a fresh .env file to avoid conflicts
+          echo "🛠️ Configuring Laravel environment..."
           cp .env.example .env
 
-          # Configure database settings for MySQL
-          sed -i 's/DB_CONNECTION=.*/DB_CONNECTION=mysql/' .env
-          sed -i 's/DB_HOST=.*/DB_HOST=localhost/' .env
-          sed -i 's/DB_PORT=.*/DB_PORT=3306/' .env
-          sed -i 's/DB_DATABASE=.*/DB_DATABASE=laravel_app/' .env
-          sed -i 's/DB_USERNAME=.*/DB_USERNAME=laravel_user/' .env
+          # Database configuration
+          sed -i "s/DB_CONNECTION=.*/DB_CONNECTION=mysql/" .env
+          sed -i "s/DB_HOST=.*/DB_HOST=localhost/" .env
+          sed -i "s/DB_PORT=.*/DB_PORT=3306/" .env
+          sed -i "s/DB_DATABASE=.*/DB_DATABASE=${{ env.DB_NAME }}/" .env
+          sed -i "s/DB_USERNAME=.*/DB_USERNAME=${{ env.DB_USER }}/" .env
           sed -i "s/DB_PASSWORD=.*/DB_PASSWORD=${{ secrets.DB_PASSWORD }}/" .env
 
-          # Remove any SQLite database path if it exists
-          sed -i '/DB_DATABASE=.*\.sqlite/d' .env
-
-          # Ensure no cache database references exist
-          grep -v "CACHE_DRIVER=database" .env > .env.tmp && mv .env.tmp .env || true
-
-          # Add file-based cache configuration
+          # Optimize configuration
           echo "CACHE_DRIVER=file" >> .env
           echo "SESSION_DRIVER=file" >> .env
           echo "QUEUE_CONNECTION=sync" >> .env
 
-          # Install Composer dependencies
           echo "📦 Installing Composer dependencies..."
-          composer install --no-dev --optimize-autoloader --no-interaction
+          composer install --no-dev --optimize-autoloader --no-interaction --no-progress
 
-          # Generate application key
+          echo "🔑 Generating application key..."
           php artisan key:generate --force
 
-          # Create required directories
+          echo "📂 Setting up storage directories..."
           mkdir -p storage/framework/{cache,sessions,views}
           mkdir -p storage/logs
-          mkdir -p storage/app/public
           mkdir -p bootstrap/cache
+          chmod -R 775 storage bootstrap/cache
+          chown -R $USER:www-data storage bootstrap/cache
 
-          # Set proper permissions
-          sudo chown -R $USER:www-data storage bootstrap/cache
-          sudo chmod -R 775 storage bootstrap/cache
-
-          # Clear all caches to ensure fresh configuration
-          php artisan config:clear || true
-          php artisan cache:clear || true
-          php artisan view:clear || true
-          php artisan route:clear || true
-
-          # Cache configurations
-          php artisan config:cache
-
-          # Test database connection before running migrations
-          echo "🔍 Testing database connection..."
-          php artisan migrate:status || echo "Database connection test failed, but continuing..."
-
-          # Run database migrations
-          echo "🗃️ Running database migrations..."
+          echo "🔄 Running database migrations..."
           php artisan migrate --force
 
-          # Create storage symlink if it doesn't exist
+          echo "🔗 Creating storage symlink..."
           php artisan storage:link || true
 
-          # Optional: Seed database (uncomment if you have seeders)
-          # php artisan db:seed --force
+          echo "🧹 Clearing caches..."
+          php artisan optimize:clear || true
+          php artisan config:cache
+          php artisan route:cache
+          php artisan view:cache
 
-          echo "✅ Laravel application configured successfully"
-          EOF
+          echo "✅ Laravel setup complete"
+          EOSSH
 
       - name: Configure Nginx
         shell: bash
         run: |
-          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-          set -e
-          echo "🔧 Configuring Nginx..."
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOSSH'
+          set -euo pipefail
 
-          # Create Nginx site configuration
-          sudo tee /etc/nginx/sites-available/laravel > /dev/null << 'NGINX_CONFIG'
+          echo "🌐 Configuring Nginx..."
+          sudo tee /etc/nginx/sites-available/laravel > /dev/null << 'EONGINX'
           server {
               listen 80;
               listen [::]:80;
               server_name _;
-              root /home/${{ secrets.SSH_USERNAME }}/laravel-app/public;
+              root ${{ env.APP_DIR }}/public;
               index index.php index.html index.htm;
 
-              # Security headers
-              add_header X-Frame-Options "SAMEORIGIN" always;
-              add_header X-XSS-Protection "1; mode=block" always;
-              add_header X-Content-Type-Options "nosniff" always;
+              add_header X-Frame-Options "SAMEORIGIN";
+              add_header X-XSS-Protection "1; mode=block";
+              add_header X-Content-Type-Options "nosniff";
 
-              # Handle Laravel routes
               location / {
                   try_files $uri $uri/ /index.php?$query_string;
               }
 
-              # Handle PHP files
               location ~ \.php$ {
                   include snippets/fastcgi-php.conf;
-                  fastcgi_pass unix:/run/php/php8.2-fpm.sock;
+                  fastcgi_pass unix:/run/php/php${{ env.PHP_VERSION }}-fpm.sock;
                   fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
                   include fastcgi_params;
-                  fastcgi_hide_header X-Powered-By;
               }
 
-              # Deny access to hidden files
-              location ~ /\. {
+              location ~ /\.(?!well-known).* {
                   deny all;
               }
 
-              # Deny access to sensitive files
               location ~* \.(env|log)$ {
                   deny all;
               }
 
-              # Optimize static file serving
               location ~* \.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
                   expires 1y;
                   add_header Cache-Control "public, immutable";
                   try_files $uri =404;
               }
           }
-          NGINX_CONFIG
+          EONGINX
 
-          # Enable the site and disable default
           sudo ln -sf /etc/nginx/sites-available/laravel /etc/nginx/sites-enabled/
           sudo rm -f /etc/nginx/sites-enabled/default
 
-          # Test Nginx configuration
+          echo "🔍 Testing Nginx configuration..."
           sudo nginx -t
 
-          echo "✅ Nginx configured successfully"
-          EOF
-
-      - name: Start Services
-        shell: bash
-        run: |
-          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-          set -e
-          echo "🚀 Starting services..."
-
-          # Start and enable services
-          sudo systemctl restart php8.2-fpm
-          sudo systemctl enable php8.2-fpm
+          echo "🔄 Restarting services..."
+          sudo systemctl restart php${{ env.PHP_VERSION }}-fpm
           sudo systemctl restart nginx
+          sudo systemctl enable php${{ env.PHP_VERSION }}-fpm
           sudo systemctl enable nginx
 
-          # Check service status
-          sudo systemctl is-active php8.2-fpm
-          sudo systemctl is-active nginx
+          echo "✅ Nginx configuration complete"
+          EOSSH
 
-          echo "✅ Services started successfully"
-          EOF
-
-      - name: Verify Configuration
-        shell: bash
-        run: |
-          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-          set -e
-          cd ~/laravel-app
-
-          echo "🔍 Verifying Laravel configuration..."
-
-          # Show current database configuration
-          echo "Database configuration:"
-          php artisan tinker --execute="echo config('database.default') . PHP_EOL; print_r(config('database.connections.mysql'));"
-
-          # Test basic artisan commands
-          php artisan --version
-
-          # Check if .env file has correct database config
-          echo "Environment file database settings:"
-          grep "DB_" .env
-
-          echo "✅ Configuration verification completed"
-          EOF
-
-      - name: Run Tests and Generate Coverage
+      - name: Run tests and generate coverage
         shell: bash
         continue-on-error: true
         run: |
-          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOSSH'
           set +e
-          cd ~/laravel-app
+          cd ${{ env.APP_DIR }}
 
-          echo "🧪 Running Laravel tests..."
+          echo "🧪 Installing test dependencies..."
+          composer install --optimize-autoloader --no-interaction --no-progress
 
-          # Install dev dependencies for testing
-          composer install --optimize-autoloader --no-interaction
-
-          # Run tests with coverage if possible
+          echo "🔍 Running tests with coverage..."
           if [ -f "./vendor/bin/pest" ]; then
             ./vendor/bin/pest --coverage-clover=coverage.xml --coverage-html=coverage-report || true
           elif [ -f "./vendor/bin/phpunit" ]; then
             ./vendor/bin/phpunit --coverage-clover=coverage.xml --coverage-html=coverage-report || true
           else
-            echo "⚠️ No test runner found (pest or phpunit)"
+            echo "⚠️ No test runner found"
           fi
+          EOSSH
 
-          # Check if coverage was generated
-          if [ -f coverage.xml ]; then
-            echo "✅ Coverage report generated"
-          else
-            echo "⚠️ No coverage report generated"
-          fi
-          EOF
-
-      - name: Download Coverage Reports
+      - name: Retrieve coverage reports
         shell: bash
         continue-on-error: true
         run: |
-          # Download coverage files if they exist
-          scp -r ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/coverage-report ./coverage-report/ 2>/dev/null || echo "No coverage-report directory found"
-          scp ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/coverage.xml ./coverage.xml 2>/dev/null || echo "No coverage.xml found"
+          mkdir -p coverage-report
+          scp ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:${{ env.APP_DIR }}/coverage.xml ./coverage.xml || echo "No coverage.xml found"
+          scp -r ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:${{ env.APP_DIR }}/coverage-report ./ || echo "No coverage-report directory found"
 
-      - name: Upload Coverage Reports
-        if: always()
+      - name: Upload coverage reports
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: coverage-reports
           path: |
-            coverage-report/
             coverage.xml
+            coverage-report/
           retention-days: 7
-        continue-on-error: true
 
-      - name: Health Check
+      - name: Analyze with SonarCloud
+        uses: sonarsource/sonarcloud-github-action@master
+        if: success() || failure()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.projectKey=your-project-key
+            -Dsonar.organization=your-org
+            -Dsonar.php.coverage.reportPaths=coverage.xml
+            -Dsonar.php.tests.reportPath=test-report.xml
+
+      - name: Verify deployment
         shell: bash
         run: |
-          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-          set -e
-          echo "🏥 Performing health checks..."
+          echo "🔍 Verifying deployment..."
+          max_retries=5
+          retry_count=0
+          sleep_seconds=10
 
-          # Check if Laravel is responding
-          cd ~/laravel-app
+          while [ $retry_count -lt $max_retries ]; do
+            response=$(curl -s -o /dev/null -w "%{http_code}" http://${{ secrets.SSH_HOST }}/ || echo "000")
 
-          # Test Laravel artisan commands
-          php artisan --version
+            if [ "$response" = "200" ]; then
+              echo "✅ Website is accessible (HTTP 200)"
+              exit 0
+            fi
 
-          # Check database connection
-          php artisan migrate:status
+            retry_count=$((retry_count+1))
+            echo "⚠️ Attempt $retry_count: Received HTTP $response, retrying in $sleep_seconds seconds..."
+            sleep $sleep_seconds
+          done
 
-          echo "✅ Application health check passed"
-          EOF
+          echo "::error::Failed to verify deployment after $max_retries attempts"
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "sudo tail -30 /var/log/nginx/error.log" || true
+          exit 1
 
-      - name: Verify Website Accessibility
-        run: |
-          echo "🌐 Testing website accessibility..."
-          sleep 5  # Give services time to fully start
-
-          # Test the website
-          response=$(curl -s -o /dev/null -w "%{http_code}" http://${{ secrets.SSH_HOST }}/ || echo "000")
-
-          if [ "$response" = "200" ]; then
-            echo "✅ Website is accessible and responding with HTTP 200"
-          else
-            echo "⚠️ Website responded with HTTP $response"
-            echo "Checking server logs..."
-            ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "sudo tail -20 /var/log/nginx/error.log" || true
-          fi
-
-      - name: Deployment Summary
+      - name: Deployment summary
         if: always()
         run: |
-          echo "📋 Deployment Summary:"
-          echo "- Repository: ${{ github.repository }}"
-          echo "- Branch: ${{ github.ref_name }}"
-          echo "- Commit: ${{ github.sha }}"
-          echo "- Target Server: ${{ secrets.SSH_HOST }}"
-          echo "- Application URL: http://${{ secrets.SSH_HOST }}/"
-
-          if [ "${{ job.status }}" == 'success' ]; then
-            echo "✅ Deployment completed successfully!"
-          else
-            echo "⚠️ Deployment completed with some warnings"
-          fi
+          echo "📋 Deployment Summary"
+          echo "-------------------"
+          echo "Repository: ${{ github.repository }}"
+          echo "Branch: ${{ github.ref }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Server: ${{ secrets.SSH_HOST }}"
+          echo "Status: ${{ job.status }}"
+          echo "Timestamp: $(date -u)"
+          echo "Application URL: http://${{ secrets.SSH_HOST }}/"
+          echo "SonarCloud URL: https://sonarcloud.io/dashboard?id=your-project-key"
