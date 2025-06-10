@@ -81,27 +81,36 @@ jobs:
             echo "✅ Composer installed:"
             composer --version
 
-            echo "🔧 Setting PHP 8.2 as default..."
-            sudo update-alternatives --set php /usr/bin/php8.2
-            echo "✅ PHP version set to:"
-            php -v
-
-            echo "📂 Navigating to Laravel project directory..."
-            cd ~/laravel-app || { echo "❌ Laravel app directory not found"; exit 1; }
-
             echo "📦 Installing Laravel dependencies..."
+            cd ~/laravel-app || { echo "❌ Laravel app directory not found"; exit 1; }
             composer install --optimize-autoloader --ignore-platform-reqs || { echo "❌ Failed to install Laravel dependencies"; exit 1; }
 
             echo "📦 Installing test dependencies..."
             composer require pestphp/pest pestphp/pest-plugin-laravel --dev --no-interaction --ignore-platform-reqs || { echo "❌ Failed to install test dependencies"; exit 1; }
 
+            echo "🌐 Installing Nginx web server..."
+            sudo apt update -y
+            sudo apt install -y nginx
+            echo "✅ Nginx installed:"
+            nginx -v
+
+            echo "🛡️ Setting up firewall rules..."
+            sudo ufw allow OpenSSH
+            sudo ufw allow 80/tcp
+            sudo ufw allow 8080/tcp
+            sudo ufw allow 5173/tcp
+            sudo ufw --force enable
+            echo "✅ Firewall rules configured:"
+            sudo ufw status verbose
+
+            echo "🔧 Setting PHP 8.2 as default..."
+            sudo update-alternatives --set php /usr/bin/php8.2
+            echo "✅ PHP version set to:"
+            php -v
+
             echo "📦 Installing npm dependencies..."
             npm ci || { echo "❌ Failed to install npm dependencies"; exit 1; }
-            npm install || { echo "❌ Failed to install additional npm dependencies"; exit 1; }
-
-            echo "🏗️ Building frontend assets..."
-            npm run build || { echo "❌ Failed to build frontend assets"; exit 1; }
-
+            npm run build || { echo "❌ Failed to build frontend"; exit 1; }
 
             echo "🔧 Fixing permissions..."
             sudo chown -R $USER:www-data storage bootstrap/cache
@@ -130,14 +139,6 @@ jobs:
             php artisan config:clear || { echo "❌ Failed to clear config cache"; exit 1; }
             php artisan cache:clear || { echo "❌ Failed to clear application cache"; exit 1; }
             php artisan view:clear || { echo "❌ Failed to clear view cache"; exit 1; }
-
-            echo "🛡️ Setting up firewall rules..."
-            sudo ufw allow OpenSSH
-            sudo ufw allow 8080/tcp
-            sudo ufw allow 5173/tcp
-            sudo ufw --force enable
-            echo "✅ Firewall rules configured:"
-            sudo ufw status verbose
 
             echo "✅ Remote setup and deployment completed successfully."
           EOF
