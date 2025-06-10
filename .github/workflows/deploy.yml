@@ -70,6 +70,24 @@ jobs:
             node -v
             npm -v
 
+            echo "📦 Installing Composer (if needed)..."
+            if ! command -v composer &> /dev/null; then
+              php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
+              php composer-setup.php || { echo "❌ Failed to install Composer"; exit 1; }
+              sudo mv composer.phar /usr/local/bin/composer
+              sudo chmod +x /usr/local/bin/composer
+              rm composer-setup.php
+            fi
+            echo "✅ Composer installed:"
+            composer --version
+
+            echo "📦 Installing Laravel dependencies..."
+            composer install --optimize-autoloader --ignore-platform-reqs || { echo "❌ Failed to install Laravel dependencies"; exit 1; }
+
+            echo "📦 Installing test dependencies..."
+            composer require pestphp/pest pestphp/pest-plugin-laravel --dev --no-interaction --ignore-platform-reqs || { echo "❌ Failed to install test dependencies"; exit 1; }
+
+
             echo "🛡️ Setting up firewall rules..."
             sudo ufw allow OpenSSH
             sudo ufw allow 8080/tcp
@@ -104,22 +122,6 @@ jobs:
               php artisan key:generate || { echo "❌ Failed to generate APP_KEY"; exit 1; }
             fi
 
-            echo "📦 Installing Composer (if needed)..."
-            if ! command -v composer &> /dev/null; then
-              php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
-              php composer-setup.php || { echo "❌ Failed to install Composer"; exit 1; }
-              sudo mv composer.phar /usr/local/bin/composer
-              sudo chmod +x /usr/local/bin/composer
-              rm composer-setup.php
-            fi
-            echo "✅ Composer installed:"
-            composer --version
-
-            echo "📦 Installing Laravel dependencies..."
-            composer install --optimize-autoloader --ignore-platform-reqs || { echo "❌ Failed to install Laravel dependencies"; exit 1; }
-
-            echo "📦 Installing test dependencies..."
-            composer require pestphp/pest pestphp/pest-plugin-laravel --dev --no-interaction --ignore-platform-reqs || { echo "❌ Failed to install test dependencies"; exit 1; }
 
             echo "🗃️ Migrating database..."
             php artisan cache:table || true
