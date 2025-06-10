@@ -26,15 +26,63 @@ jobs:
       - name: Setup SSH
         shell: bash
         run: |
+          set -e
+          echo "🔐 Setting up SSH configuration..."
+
+          # Create SSH directory
           mkdir -p ~/.ssh
+
+          # Verify SSH_PRIVATE_KEY secret exists
+          if [ -z "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
+            echo "❌ SSH_PRIVATE_KEY secret is not set!"
+            exit 1
+          fi
+
+          # Verify SSH_HOST secret exists
+          if [ -z "${{ secrets.SSH_HOST }}" ]; then
+            echo "❌ SSH_HOST secret is not set!"
+            exit 1
+          fi
+
+          # Create SSH private key file
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
+
+          # Verify key format
+          if ! ssh-keygen -l -f ~/.ssh/id_rsa > /dev/null 2>&1; then
+            echo "❌ SSH private key format is invalid!"
+            exit 1
+          fi
+
+          # Add host to known_hosts
+          echo "🔍 Adding host to known_hosts..."
+          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || {
+            echo "⚠️ Could not add host to known_hosts, will try without strict checking"
+            echo "Host ${{ secrets.SSH_HOST }}" > ~/.ssh/config
+            echo "  StrictHostKeyChecking no" >> ~/.ssh/config
+            echo "  UserKnownHostsFile /dev/null" >> ~/.ssh/config
+          }
+
+          echo "✅ SSH setup completed"
 
       - name: Test SSH Connection
         shell: bash
         run: |
-          ssh -o ConnectTimeout=10 ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "echo 'SSH connection successful'"
+          set -e
+          echo "🔗 Testing SSH connection..."
+
+          # Test SSH connection with timeout
+          if ssh -o ConnectTimeout=30 -o BatchMode=yes ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "echo 'SSH connection successful'"; then
+            echo "✅ SSH connection test passed"
+          else
+            echo "❌ SSH connection failed!"
+            echo "Debugging information:"
+            echo "- SSH_HOST: ${{ secrets.SSH_HOST }}"
+            echo "- SSH_USERNAME: ${{ secrets.SSH_USERNAME }}"
+            echo "- SSH key fingerprint:"
+            ssh-keygen -l -f ~/.ssh/id_rsa || echo "Could not read SSH key"
+            exit 1
+          fi
 
       - name: Prepare Remote Environment
         shell: bash
