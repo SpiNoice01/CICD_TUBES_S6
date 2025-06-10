@@ -75,6 +75,14 @@ jobs:
             else
               echo "✅ .env already exists, skipping key generation"
             fi
+            echo "📦 Creating SQLite database file..."
+            if [ ! -f database/database.sqlite ]; then
+              mkdir -p database
+              touch database/database.sqlite
+              echo "✅ SQLite database file created"
+            else
+              echo "✅ SQLite database file already exists"
+            fi
             echo "📦 Installing Composer dependencies..."
             composer install --optimize-autoloader --ignore-platform-reqs
             echo "🗃️ Migrating database..."
