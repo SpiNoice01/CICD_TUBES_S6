@@ -108,6 +108,11 @@ jobs:
             echo "🌱 Setting up environment..."
             if [ ! -f .env ]; then
               cp .env.example .env || { echo "❌ Failed to copy .env file"; exit 1; }
+              echo "APP_ENV=production" >> .env
+              echo "APP_DEBUG=false" >> .env
+              echo "APP_URL=http://${{ secrets.SSH_HOST }}" >> .env
+              echo "ASSET_URL=http://${{ secrets.SSH_HOST }}" >> .env
+              echo "VITE_APP_URL=http://${{ secrets.SSH_HOST }}" >> .env
             fi
             if ! grep -q "^APP_KEY=base64:" .env; then
               echo "🔐 Generating Laravel APP_KEY..."
