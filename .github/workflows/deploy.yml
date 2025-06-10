@@ -87,7 +87,7 @@ jobs:
           # Create new Laravel site configuration
           sudo bash -c 'cat > /etc/nginx/sites-available/laravel << "EOL"
           server {
-              listen 80;
+              listen 8000;
               server_name _;
               root /home/${{ secrets.SSH_USERNAME }}/laravel-app/public;
               index index.php index.html index.htm;
