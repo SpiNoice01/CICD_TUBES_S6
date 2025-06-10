@@ -99,6 +99,10 @@ jobs:
             npm ci || { echo "❌ Failed to install npm dependencies"; exit 1; }
             npm install || { echo "❌ Failed to install additional npm dependencies"; exit 1; }
 
+            echo "🏗️ Building frontend assets..."
+            npm run build || { echo "❌ Failed to build frontend assets"; exit 1; }
+
+
             echo "🔧 Fixing permissions..."
             sudo chown -R $USER:www-data storage bootstrap/cache
             sudo chmod -R ug+rwx storage bootstrap/cache
