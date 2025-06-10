@@ -32,23 +32,11 @@ jobs:
           echo "Host *" > ~/.ssh/config
           echo "  StrictHostKeyChecking no" >> ~/.ssh/config
 
-      - name: Add SSH Key
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-
-      - name: Test SSH Connection
-        shell: bash
-        run: |
-          ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "echo SSH connection successful"
-
       - name: Deploy Application via rsync
         shell: bash
         run: |
-          set -e
           rsync -avz --no-perms --no-owner --no-group --delete \
-            -e "ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa" \
+            -e "ssh -o StrictHostKeyChecking=no" \
             --exclude='.git' \
             --exclude='.env' \
             --exclude='storage/*' \
@@ -58,7 +46,7 @@ jobs:
       - name: Remote Setup & Deploy
         shell: bash
         run: |
-          ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
             set -e
 
             cd ~/laravel-app
@@ -109,7 +97,7 @@ jobs:
       - name: Start Application Services
         shell: bash
         run: |
-          ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
             set -e
             echo "♻️ Restarting services..."
             sudo systemctl restart nginx
@@ -125,7 +113,7 @@ jobs:
       - name: Verify Services
         shell: bash
         run: |
-          ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
             set -e
             echo "✅ Checking services..."
             sudo systemctl is-active nginx || (echo "Nginx is not running!" && exit 1)
@@ -137,10 +125,10 @@ jobs:
 
       - name: Run Tests and Generate Coverage
         shell: bash
-        continue-on-error: true
+        continue-on-error: true # This allows the workflow to continue even if tests fail
         run: |
-          ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-            set +e
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
+            set +e  # Disable immediate exit on error to capture coverage even if tests fail
 
             cd ~/laravel-app
 
@@ -149,6 +137,7 @@ jobs:
 
             echo "📊 Test execution completed (ignoring failures)"
 
+            # Always try to generate the coverage report
             if [ -f coverage.xml ]; then
               echo "✅ Coverage report generated successfully"
               echo "Coverage Summary:"
@@ -156,15 +145,16 @@ jobs:
                 awk '{sum += $1; count++} END {print "Average coverage: " sum/count*100 "%"}'
             else
               echo "❌ Failed to generate coverage report"
-              exit 0
+              exit 0  # Still continue the workflow
             fi
 
+            # Always show the last 20 lines of Laravel log for debugging
             echo "📝 Last 20 lines of Laravel log:"
             tail -20 ~/laravel.log || echo "No Laravel log found"
           EOF
 
       - name: Upload Coverage Reports
-        if: always()
+        if: always() # Always upload artifacts even if previous steps fail
         uses: actions/upload-artifact@v4
         with:
           name: coverage-reports
