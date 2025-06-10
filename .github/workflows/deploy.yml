@@ -1,4 +1,4 @@
-name: Deploy Laravel Dummy App to Azure VM
+name: Deploy Laravel to Azure VM
 
 on:
   push:
@@ -12,25 +12,19 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup PHP
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: "8.2"
-          extensions: mbstring, ctype, xml, json, openssl, pdo, tokenizer
-          tools: composer
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "18"
 
-      - name: Install dependencies
-        run: |
-          composer install --no-interaction --prefer-dist --optimize-autoloader
-          npm install
-          npm run build
+      - name: Install npm dependencies
+        run: npm install
+
+      - name: Build assets
+        run: npm run build
 
       - name: Setup SSH
+        shell: bash
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
@@ -38,7 +32,8 @@ jobs:
           echo "Host *" > ~/.ssh/config
           echo "  StrictHostKeyChecking no" >> ~/.ssh/config
 
-      - name: Rsync files to VM
+      - name: Deploy Application via rsync
+        shell: bash
         run: |
           rsync -avz --no-perms --no-owner --no-group --delete \
             -e "ssh -o StrictHostKeyChecking=no" \
@@ -48,81 +43,46 @@ jobs:
             --exclude='node_modules' \
             ./ ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:~/laravel-app/
 
-      - name: Remote Setup
+      - name: Remote Setup & Deploy
+        shell: bash
         run: |
           ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'EOF'
             set -e
+            sudo apt-get update
+            sudo apt-get install -y nginx php8.2-fpm php-sqlite3 unzip curl
             cd ~/laravel-app
-
-            # Setup environment
+            sudo chown -R $USER:www-data storage bootstrap/cache
+            sudo chmod -R 775 storage bootstrap/cache
             if [ ! -f .env ]; then
               cp .env.example .env
               php artisan key:generate
             fi
-
-            # Fix permissions
-            sudo chown -R $USER:www-data storage bootstrap/cache
-            sudo chmod -R 775 storage bootstrap/cache
-
-            # Install required packages
-            sudo apt-get update
-            sudo apt-get install -y php-cli php-mbstring php-xml php-mysql php-zip unzip
-
-            # Install Composer if not exists
-            if ! command -v composer &> /dev/null; then
-              php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
-              php composer-setup.php
-              sudo mv composer.phar /usr/local/bin/composer
-              sudo chmod +x /usr/local/bin/composer
-              php -r "unlink('composer-setup.php');"
-            fi
-
-            # Install dependencies
-            composer install --optimize-autoloader --no-interaction --ignore-platform-reqs
-
-            # Setup database (using SQLite for dummy app)
-            touch database/database.sqlite
+            composer install --optimize-autoloader --no-dev
             php artisan migrate --force
-
-            # Clear caches
-            php artisan config:clear
-            php artisan cache:clear
-            php artisan view:clear
-          EOF
-
-      - name: Configure Web Server
-        run: |
-          ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'EOF'
-            set -e
-            # Create Nginx config (simplified for dummy app)
-            sudo bash -c 'cat > /etc/nginx/sites-available/laravel << "EOL"
+            sudo tee /etc/nginx/sites-available/laravel << 'NGINX_CONF'
             server {
                 listen 80;
                 server_name _;
-                root /home/$USER/laravel-app/public;
+                root /home/${USER}/laravel-app/public;
 
-                index index.php index.html;
+                index index.php index.html index.htm;
 
                 location / {
-                    try_files \$uri \$uri/ /index.php?\$query_string;
+                    try_files $uri $uri/ /index.php?$query_string;
                 }
 
                 location ~ \.php$ {
                     include snippets/fastcgi-php.conf;
-                    fastcgi_pass unix:/run/php/php-fpm.sock;
+                    fastcgi_pass unix:/run/php/php8.2-fpm.sock;
                 }
 
                 location ~ /\.ht {
                     deny all;
                 }
             }
-            EOL'
-
-            # Enable site
+            NGINX_CONF
             sudo ln -sf /etc/nginx/sites-available/laravel /etc/nginx/sites-enabled/
             sudo rm -f /etc/nginx/sites-enabled/default
-
-            # Restart services
             sudo systemctl restart nginx
             sudo systemctl restart php8.2-fpm
           EOF
