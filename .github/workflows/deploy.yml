@@ -32,12 +32,6 @@ jobs:
           echo "Host *" > ~/.ssh/config
           echo "  StrictHostKeyChecking no" >> ~/.ssh/config
 
-      # Optional: Upload .env via secret (RECOMMENDED)
-      - name: Upload .env if available
-        if: ${{ secrets.LARAVEL_ENV_FILE != '' }}
-        run: |
-          echo "${{ secrets.LARAVEL_ENV_FILE }}" > .env
-
       - name: Deploy Application via rsync
         shell: bash
         run: |
