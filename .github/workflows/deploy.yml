@@ -176,6 +176,20 @@ jobs:
             disown
           EOF
 
+      - name: Debug Laravel Application
+        shell: bash
+        run: |
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
+            echo "🔍 Debugging Laravel application..."
+            cd ~/laravel-app
+            php artisan route:list
+            php artisan config:cache
+            php artisan cache:clear
+            php artisan view:clear
+            echo "📝 Laravel logs:"
+            tail -n 50 storage/logs/laravel.log || echo "No Laravel logs found"
+          EOF
+
       - name: Verify Services
         shell: bash
         run: |
