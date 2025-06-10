@@ -114,7 +114,7 @@ jobs:
 
             # Stop previous Vite dev server (if any)
             sudo pkill -f "vite" || true
-            nohup npm run dev > ~/vite.log 2>&1 &
+            nohup npm run dev -- --host 0.0.0.0 > ~/vite.log 2>&1 &
 
             echo "✅ Laravel and Vite are running in the background."
           EOF
@@ -122,13 +122,13 @@ jobs:
       - name: Verify Laravel Dev Server
         run: |
           echo "🌐 Verifying Laravel is accessible on port 8000..."
-          sleep 10 # beri waktu server untuk benar-benar start
+          sleep 10
           curl -sSf http://${{ secrets.SSH_HOST }}:8000 || (echo "❌ Laravel not responding on port 8000" && exit 1)
 
       - name: Verify Vite Dev Server
         run: |
           echo "🌐 Verifying Vite is accessible on port 5173..."
-          sleep 10 # beri waktu server untuk benar-benar start
+          sleep 10
           curl -sSf http://${{ secrets.SSH_HOST }}:5173 || (echo "❌ Vite not responding on port 5173" && exit 1)
 
       - name: Run Tests and Generate Coverage
