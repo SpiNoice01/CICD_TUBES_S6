@@ -110,7 +110,7 @@ jobs:
 
             echo "📦 Installing npm dependencies..."
             npm ci || { echo "❌ Failed to install npm dependencies"; exit 1; }
-            npm run build || { echo "❌ Failed to build frontend"; exit 1; }
+            npm run dev -- --host 0.0.0.0 || { echo "❌ Failed to build frontend"; exit 1; }
 
             echo "🔧 Fixing permissions..."
             sudo chown -R $USER:www-data storage bootstrap/cache
