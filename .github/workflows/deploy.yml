@@ -31,7 +31,6 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           echo "Host *" > ~/.ssh/config
           echo "  StrictHostKeyChecking no" >> ~/.ssh/config
-
       - name: Deploy Application via rsync
         shell: bash
         run: |
@@ -42,85 +41,99 @@ jobs:
             --exclude='storage/*' \
             --exclude='node_modules' \
             ./ ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/
-
       - name: Remote Setup & Deploy
         shell: bash
         run: |
           ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
             set -e
             cd ~/laravel-app
+            echo "🔧 Fixing permissions..."
             sudo chown -R $USER:www-data storage bootstrap/cache
             sudo chmod -R 775 storage bootstrap/cache
-
+            echo "🌱 Setting up environment..."
             if [ ! -f .env ]; then
               cp .env.example .env
               php artisan key:generate
+              echo "✅ Application key generated and saved to .env"
+            else
+              echo "✅ .env already exists, skipping key generation"
             fi
-
+            echo "📦 Installing PHP dependencies..."
             sudo apt-get update
             sudo apt-get install -y php-sqlite3 unzip curl
-
             if ! [ -x "$(command -v composer)" ]; then
               php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
+              EXPECTED_SIGNATURE="$(php -r 'copy(\"https://composer.github.io/installer.sig\", \"php://stdout\");')"
+              php -r "if (hash_file('sha384', 'composer-setup.php') === '$EXPECTED_SIGNATURE') { echo 'Installer verified'; } else { echo 'Installer corrupt'; unlink('composer-setup.php'); exit(1); }"
               php composer-setup.php
               sudo mv composer.phar /usr/local/bin/composer
+              sudo chmod +x /usr/local/bin/composer
               php -r "unlink('composer-setup.php');"
             fi
-
+            echo "Installing Composer dependencies..."
             composer install --optimize-autoloader --ignore-platform-reqs
+            echo "Installing test dependencies..."
             composer require pestphp/pest pestphp/pest-plugin-laravel --dev --no-interaction --ignore-platform-reqs
-
+            echo "🗃️ Migrating database..."
             php artisan cache:table || true
             php artisan session:table || true
             php artisan migrate --force
-
+            echo "🧹 Clearing caches..."
             php artisan config:clear
             php artisan cache:clear
             php artisan view:clear
           EOF
-
       - name: Start Application Services
         shell: bash
         run: |
           ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
             set -e
+            echo "♻️ Restarting services..."
             sudo systemctl restart nginx
-            sudo systemctl restart php8.2-fpm
-
+            sudo systemctl restart php8.4-fpm
+            echo "🚀 Starting Laravel development server..."
             cd ~/laravel-app
             sudo pkill -f "php artisan serve" || true
             nohup php artisan serve --host=0.0.0.0 --port=8080 > ~/laravel.log 2>&1 &
             disown
           EOF
-
       - name: Verify Services
         shell: bash
-        run: |a
-          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-            set -e
-            sudo systemctl is-active nginx || (echo "Nginx is not running!" && exit 1)
-            sudo systemctl is-active php8.2-fpm || (echo "PHP-FPM is not running!" && exit 1)
-            curl -sSf http://localhost:8080 || (echo "Laravel server not responding!" && exit 1)
-          EOF
-
-      - name: Run Tests and Generate Coverage
-        shell: bash
-        continue-on-error: true
         run: |
           ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-            set +e
+            set -e
+            echo "✅ Checking services..."
+            sudo systemctl is-active nginx || (echo "Nginx is not running!" && exit 1)
+            sudo systemctl is-active php8.4-fpm || (echo "PHP-FPM is not running!" && exit 1)
+            echo "🌐 Checking web server..."
+            curl -sSf http://localhost:8080 || (echo "Laravel server not responding!" && exit 1)
+          EOF
+      - name: Run Tests and Generate Coverage
+        shell: bash
+        continue-on-error: true # This allows the workflow to continue even if tests fail
+        run: |
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
+            set +e  # Disable immediate exit on error to capture coverage even if tests fail
             cd ~/laravel-app
+            echo "🔍 Running tests (may fail but will still generate coverage)..."
             ./vendor/bin/pest --coverage-html=coverage-report --coverage-clover=coverage.xml || true
+            echo "📊 Test execution completed (ignoring failures)"
+            # Always try to generate the coverage report
             if [ -f coverage.xml ]; then
-              echo "✅ Coverage report generated"
+              echo "✅ Coverage report generated successfully"
+              echo "Coverage Summary:"
               grep -oP 'filename.*?line-rate="\K[^"]+' coverage.xml | \
                 awk '{sum += $1; count++} END {print "Average coverage: " sum/count*100 "%"}'
+            else
+              echo "❌ Failed to generate coverage report"
+              exit 0  # Still continue the workflow
             fi
+            # Always show the last 20 lines of Laravel log for debugging
+            echo "📝 Last 20 lines of Laravel log:"
             tail -20 ~/laravel.log || echo "No Laravel log found"
           EOF
-
       - name: Upload Coverage Reports
-        if: always()
+        if: always() # Always upload artifacts even if previous steps fail
         uses: actions/upload-artifact@v4
         with:
           name: coverage-reports
@@ -129,31 +142,15 @@ jobs:
             coverage.xml
           retention-days: 1
 
-      # - name: Install SonarScanner CLI
-      #   run: |
-      #     curl -sSLo sonar-scanner.zip https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-4.8.0.2856-linux.zip
-      #     unzip sonar-scanner.zip -d $HOME
-      #     echo "$HOME/sonar-scanner-4.8.0.2856-linux/bin" >> $GITHUB_PATH
-
-      # - name: Run SonarScanner
-      #   run: |
-      #     sonar-scanner \
-      #       -Dsonar.projectKey=SpiNoice01_CICD_TUBES_S6 \
-      #       -Dsonar.organization=spinoice01 \
-      #       -Dsonar.projectName="SpiNoice01 CICD TUBES S6" \
-      #       -Dsonar.sources=. \
-      #       -Dsonar.host.url=https://sonarcloud.io \
-      #       -Dsonar.login=${{ secrets.SONAR_TOKEN }}
-
       - name: Final Status Report
         if: always()
         run: |
           if [ "${{ job.status }}" == 'success' ]; then
             echo "✅ All steps completed successfully"
           else
-            echo "⚠️ Workflow completed with warnings"
+            echo "⚠️ Workflow completed with warnings (some non-critical steps failed)"
+            echo "Coverage reports should still be available in artifacts"
           fi
-
       - name: Verify Website Accessibility
         run: |
           curl -sSf http://${{ secrets.SSH_HOST }}:8080 || (echo "❌ Website is not accessible!" && exit 1)
