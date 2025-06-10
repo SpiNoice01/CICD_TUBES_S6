@@ -104,9 +104,12 @@ jobs:
         run: |
           ssh -i ~/.ssh/id_rsa ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
             set -e
-            echo "♻️ Restarting services..."
+            echo "📦 Ensuring nginx is installed..."
+            sudo apt-get update
+            sudo apt-get install -y nginx
+
+            echo "♻️ Restarting nginx..."
             sudo systemctl restart nginx
-            sudo systemctl restart php8.4-fpm
 
             echo "🚀 Running Laravel dev server..."
             cd ~/laravel-app
