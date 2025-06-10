@@ -119,6 +119,12 @@ jobs:
             echo "✅ Laravel and Vite are running in the background."
           EOF
 
+      - name: Verify Laravel/Vite Dev Server
+        run: |
+          echo "🌐 Verifying Laravel/Vite is accessible on port 8080..."
+          sleep 10
+          curl -sSf http://${{ secrets.SSH_HOST }}:8080 || (echo "❌ Server not responding on port 8080" && exit 1)
+
       - name: Run Tests and Generate Coverage
         continue-on-error: true
         run: |
