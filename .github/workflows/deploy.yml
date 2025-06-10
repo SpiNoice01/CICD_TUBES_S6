@@ -143,7 +143,11 @@ jobs:
             sudo systemctl is-active php-fpm || \
             (echo "PHP-FPM is not running!" && exit 1)
             echo "🌐 Checking web server..."
-            curl -sSf http://localhost:8000 || (echo "Laravel server not responding!" && exit 1)
+            if ! curl -sSf http://localhost:8000 ; then
+              echo "❌ Laravel server not responding! Printing last 40 lines of laravel.log:"
+              tail -n 40 ~/laravel-app/storage/logs/laravel.log || echo "No Laravel log found"
+              exit 1
+            fi
           EOF
 
       - name: Run Tests and Generate Coverage
