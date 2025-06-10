@@ -104,20 +104,28 @@ jobs:
           ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
             set -e
             echo "♻️ Restarting services..."
+
+            # Avoid interactive prompts during install
+            export DEBIAN_FRONTEND=noninteractive
             sudo apt update
             sudo apt install -y nginx
-            sudo systemctl enable nginx
-            sudo systemctl restart nginx
 
-            echo "🔁 Enabling and restarting Nginx..."
-            sudo nginx -t && sudo systemctl enable nginx || echo "⚠️ Failed to enable Nginx. Check config."
-            sudo systemctl restart nginx || echo "⚠️ Nginx failed to restart. Check status manually."
-
-
+            echo "🔁 Testing Nginx config..."
+            if sudo nginx -t; then
+              echo "✅ Nginx config OK. Enabling service..."
+              sudo systemctl enable nginx
+              sudo systemctl restart nginx
+            else
+              echo "❌ Nginx config has errors. Skipping service restart."
+            fi
 
             echo "🚀 Starting Laravel development server..."
             cd ~/laravel-app
+
+            # Kill old Laravel dev server if exists
             sudo pkill -f "php artisan serve" || true
+
+            # Start Laravel dev server in background
             nohup php artisan serve --host=0.0.0.0 --port=8000 > ~/laravel.log 2>&1 &
             disown
           EOF
