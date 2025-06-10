@@ -17,6 +17,9 @@ jobs:
           echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.conf
           echo fs.inotify.max_user_instances=1024 | sudo tee -a /etc/sysctl.conf
           sudo sysctl -p
+          echo "✅ File watcher limits updated:"
+          sysctl fs.inotify.max_user_watches
+          sysctl fs.inotify.max_user_instances
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -133,7 +136,7 @@ jobs:
             echo "🔍 Finding npm path..."
             NPM_PATH=$(which npm)
             echo "Using npm at: $NPM_PATH"
-            nohup ./node_modules/.bin/vite --host 0.0.0.0 --port 8080 > ~/vite.log 2>&1 &
+            nohup ./node_modules/.bin/vite --host 0.0.0.0 --port=8080 > ~/vite.log 2>&1 &
 
             sleep 10  # ⏳ Wait for servers to start
 
