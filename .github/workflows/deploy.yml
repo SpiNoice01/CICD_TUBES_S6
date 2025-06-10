@@ -60,10 +60,13 @@ jobs:
             echo "🌱 Setting up environment..."
             if [ ! -f .env ]; then
               cp .env.example .env
+            fi
+            # ALWAYS generate key if empty or missing!
+            if ! grep -q '^APP_KEY=.\+' .env; then
               php artisan key:generate
               echo "✅ Application key generated and saved to .env"
             else
-              echo "✅ .env already exists, skipping key generation"
+              echo "✅ APP_KEY already set in .env, skipping key generation"
             fi
 
             echo "📦 Installing Composer if needed..."
