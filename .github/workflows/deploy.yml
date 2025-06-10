@@ -46,12 +46,17 @@ jobs:
           ssh -i ~/.ssh/id_rsa ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
             set -e
 
-            echo "🛠️ Checking PHP installation..."
-            if ! command -v php &> /dev/null; then
-              echo "🔧 Installing PHP and required extensions..."
-              sudo apt-get update
-              sudo apt-get install -y php php-cli php-mbstring php-xml php-bcmath php-curl php-zip php-sqlite3 php-mysql unzip curl
-            fi
+            echo "🛠️ Installing PHP 8.2 and extensions..."
+            sudo apt-get update
+            sudo apt-get install -y software-properties-common
+            sudo add-apt-repository ppa:ondrej/php -y
+            sudo apt-get update
+
+            sudo apt-get install -y php8.2 php8.2-cli php8.2-mbstring php8.2-xml php8.2-bcmath php8.2-curl php8.2-zip php8.2-mysql php8.2-sqlite3 unzip curl
+
+            echo "🔧 Setting PHP 8.2 as default..."
+            sudo update-alternatives --set php /usr/bin/php8.2
+            php -v
 
             cd ~/laravel-app
 
@@ -65,9 +70,8 @@ jobs:
               php artisan key:generate
             fi
 
-            echo "📦 Installing PHP dependencies..."
+            echo "📦 Installing Composer (if needed)..."
             if ! command -v composer &> /dev/null; then
-              echo "Installing Composer..."
               php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
               php composer-setup.php
               sudo mv composer.phar /usr/local/bin/composer
@@ -75,7 +79,10 @@ jobs:
               rm composer-setup.php
             fi
 
+            echo "📦 Installing Laravel dependencies..."
             composer install --optimize-autoloader --ignore-platform-reqs
+
+            echo "📦 Installing test dependencies..."
             composer require pestphp/pest pestphp/pest-plugin-laravel --dev --no-interaction --ignore-platform-reqs
 
             echo "🗃️ Migrating database..."
