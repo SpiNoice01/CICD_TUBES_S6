@@ -57,18 +57,6 @@ jobs:
             sudo chown -R $USER:www-data storage bootstrap/cache
             sudo chmod -R 775 storage bootstrap/cache
 
-            echo "🌱 Setting up environment..."
-            if [ ! -f .env ]; then
-              cp .env.example .env
-            fi
-            # ALWAYS generate key if empty or missing!
-            if ! grep -q '^APP_KEY=.\+' .env; then
-              php artisan key:generate
-              echo "✅ Application key generated and saved to .env"
-            else
-              echo "✅ APP_KEY already set in .env, skipping key generation"
-            fi
-
             echo "📦 Installing Composer if needed..."
             if ! [ -x "$(command -v composer)" ]; then
               php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
@@ -84,10 +72,23 @@ jobs:
               sudo chmod +x /usr/local/bin/composer
               rm composer-setup.php
             fi
+
             echo "Installing Composer dependencies..."
             composer install --optimize-autoloader --ignore-platform-reqs
             sudo chown -R $USER:www-data vendor
             sudo chmod -R 775 vendor
+
+            echo "🌱 Setting up environment..."
+            if [ ! -f .env ]; then
+              cp .env.example .env
+            fi
+            # ALWAYS generate key if empty or missing!
+            if ! grep -q '^APP_KEY=.\+' .env; then
+              php artisan key:generate
+              echo "✅ Application key generated and saved to .env"
+            else
+              echo "✅ APP_KEY already set in .env, skipping key generation"
+            fi
 
             echo "Installing test dependencies..."
             composer require pestphp/pest pestphp/pest-plugin-laravel --dev --no-interaction --ignore-platform-reqs
