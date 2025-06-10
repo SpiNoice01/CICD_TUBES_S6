@@ -109,6 +109,11 @@ jobs:
             sudo systemctl enable nginx
             sudo systemctl restart nginx
 
+            echo "🔁 Enabling and restarting Nginx..."
+            sudo nginx -t && sudo systemctl enable nginx || echo "⚠️ Failed to enable Nginx. Check config."
+            sudo systemctl restart nginx || echo "⚠️ Nginx failed to restart. Check status manually."
+
+
 
             echo "🚀 Starting Laravel development server..."
             cd ~/laravel-app
