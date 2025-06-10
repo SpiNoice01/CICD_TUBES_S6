@@ -27,21 +27,44 @@ jobs:
         shell: bash
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          # Properly format the private key with newlines
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" | sed 's/\\n/\n/g' > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          echo "Host *" > ~/.ssh/config
-          echo "  StrictHostKeyChecking no" >> ~/.ssh/config
+
+          # Configure SSH to automatically accept the host
+          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
+
+          # Create SSH config file
+          cat <<EOT > ~/.ssh/config
+          Host ${{ secrets.SSH_HOST }}
+            HostName ${{ secrets.SSH_HOST }}
+            User ${{ secrets.SSH_USERNAME }}
+            IdentityFile ~/.ssh/id_rsa
+            StrictHostKeyChecking no
+          EOT
+
+          # Verify SSH connection
+          ssh -T ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "echo 'SSH connection successful!'"
 
       - name: Deploy Application via rsync
         shell: bash
         run: |
           rsync -avz --no-perms --no-owner --no-group --delete \
-            -e "ssh -o StrictHostKeyChecking=no" \
             --exclude='.git' \
             --exclude='.env' \
             --exclude='storage/*' \
             --exclude='node_modules' \
+            --exclude='vendor' \
             ./ ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/
+
+      # [Rest of your existing steps remain unchanged...]
+      - name: Remote Setup & Deploy
+        shell: bash
+        run: |
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
+            set -e
+            [Rest of your existing script...]
+          EOF
 
       - name: Remote Setup & Deploy
         shell: bash
