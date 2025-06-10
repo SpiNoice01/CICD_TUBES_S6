@@ -49,49 +49,42 @@ jobs:
           ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
             set -e
             cd ~/laravel-app
-
-            echo "🔧 Installing PHP, Composer, and dependencies..."
-            sudo apt-get update
-            sudo apt-get install -y php php-cli php-fpm php-mbstring php-xml php-curl php-zip php-sqlite3 unzip curl
-
-            echo "PHP Version:"
-            php -v
-
-            echo "📦 Installing Composer if not exist..."
-            if ! [ -x "$(command -v composer)" ]; then
-              php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
-              php composer-setup.php
-              sudo mv composer.phar /usr/local/bin/composer
-              sudo chmod +x /usr/local/bin/composer
-              php -r "unlink('composer-setup.php');"
-            fi
-
             echo "🔧 Fixing permissions..."
             sudo chown -R $USER:www-data storage bootstrap/cache
             sudo chmod -R 775 storage bootstrap/cache
-
             echo "🌱 Setting up environment..."
             if [ ! -f .env ]; then
-              if [ -f ~/laravel-app/.env.example ]; then
-                cp .env.example .env
-              fi
+              cp .env.example .env
               php artisan key:generate
               echo "✅ Application key generated and saved to .env"
             else
               echo "✅ .env already exists, skipping key generation"
             fi
-
+            echo "📦 Installing PHP dependencies..."
+            sudo apt-get update
+            sudo apt-get install -y php-sqlite3 unzip curl
+            if ! [ -x "$(command -v composer)" ]; then
+              php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
+              EXPECTED_SIGNATURE="$(curl -s https://composer.github.io/installer.sig)"
+              ACTUAL_SIGNATURE="$(php -r "echo hash_file('sha384', 'composer-setup.php');")"
+              if [ "$EXPECTED_SIGNATURE" != "$ACTUAL_SIGNATURE" ]; then
+                echo 'ERROR: Invalid installer signature'
+                rm composer-setup.php
+                exit 1
+              fi
+              php composer-setup.php
+              sudo mv composer.phar /usr/local/bin/composer
+              sudo chmod +x /usr/local/bin/composer
+              rm composer-setup.php
+            fi
             echo "Installing Composer dependencies..."
             composer install --optimize-autoloader --ignore-platform-reqs
-
             echo "Installing test dependencies..."
             composer require pestphp/pest pestphp/pest-plugin-laravel --dev --no-interaction --ignore-platform-reqs
-
             echo "🗃️ Migrating database..."
             php artisan cache:table || true
             php artisan session:table || true
             php artisan migrate --force
-
             echo "🧹 Clearing caches..."
             php artisan config:clear
             php artisan cache:clear
@@ -105,7 +98,7 @@ jobs:
             set -e
             echo "♻️ Restarting services..."
             sudo systemctl restart nginx
-            sudo systemctl restart php8.2-fpm || sudo systemctl restart php8.1-fpm || echo "PHP-FPM restart skipped (adjust version)"
+            sudo systemctl restart php8.4-fpm
             echo "🚀 Starting Laravel development server..."
             cd ~/laravel-app
             sudo pkill -f "php artisan serve" || true
@@ -120,7 +113,7 @@ jobs:
             set -e
             echo "✅ Checking services..."
             sudo systemctl is-active nginx || (echo "Nginx is not running!" && exit 1)
-            sudo systemctl is-active php8.2-fpm || sudo systemctl is-active php8.1-fpm || (echo "PHP-FPM is not running!" && exit 1)
+            sudo systemctl is-active php8.4-fpm || (echo "PHP-FPM is not running!" && exit 1)
             echo "🌐 Checking web server..."
             curl -sSf http://localhost:8000 || (echo "Laravel server not responding!" && exit 1)
           EOF
@@ -139,7 +132,7 @@ jobs:
               echo "✅ Coverage report generated successfully"
               echo "Coverage Summary:"
               grep -oP 'filename.*?line-rate="\K[^"]+' coverage.xml | \
-                awk '{sum += $1; count++} END {print "Average coverage: " sum/count*100 "%"}'
+                awk '{sum += $1; count++} END {if(count>0){print "Average coverage: " sum/count*100 "%"} else {print "No coverage data found"}}'
             else
               echo "❌ Failed to generate coverage report"
               exit 0
