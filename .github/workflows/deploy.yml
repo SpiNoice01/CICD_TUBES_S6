@@ -56,14 +56,68 @@ jobs:
             composer --version || (echo "❌ Composer installation failed!" && exit 1)
           EOF
 
+      - name: Update System and Install Dependencies
+        shell: bash
+        run: |
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
+            set -e
+            # Update system
+            sudo apt update && sudo apt upgrade -y
+
+            # Add PHP repository
+            sudo apt install -y software-properties-common
+            sudo add-apt-repository -y ppa:ondrej/php
+            sudo apt update
+
+            # Install PHP and dependencies (PASTIKAN SAMA, misal 8.2)
+            sudo apt install -y nginx php8.2-fpm php8.2-cli php8.2-mbstring php8.2-xml php8.2-zip
+
+            # Configure PHP-FPM
+            sudo sed -i 's/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/' /etc/php/8.2/fpm/php.ini
+            sudo systemctl restart php8.2-fpm
+
+            # Configure Nginx
+            sudo bash -c 'cat > /etc/nginx/sites-available/laravel <<EOL
+            server {
+                listen 80;
+                server_name _;
+                root /home/$(whoami)/laravel-app/public;
+                index index.php index.html index.htm;
+
+                location / {
+                    try_files \$uri \$uri/ /index.php?\$query_string;
+                }
+
+                location ~ \.php$ {
+                    include snippets/fastcgi-php.conf;
+                    fastcgi_pass unix:/run/php/php8.2-fpm.sock;
+                }
+
+                location ~ /\.ht {
+                    deny all;
+                }
+            }
+            EOL'
+
+            # Enable Nginx configuration (force link jika sudah ada)
+            sudo ln -sf /etc/nginx/sites-available/laravel /etc/nginx/sites-enabled/laravel
+
+            # Test Nginx config
+            sudo nginx -t
+
+            # Restart Nginx
+            sudo systemctl restart nginx
+
+            # Setup user permissions
+            sudo usermod -aG www-data $(whoami)
+          EOF
+
       - name: Remote Setup & Deploy
         shell: bash
         run: |
           ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
             set -e
             echo "🔧 Fixing permissions..."
-            sudo apt update
-            sudo apt install -y php php-cli php-mbstring php-xml php-zip php-mysql php-sqlite3
             cd ~/laravel-app
             sudo chown -R $USER:www-data storage bootstrap/cache
             sudo chmod -R 775 storage bootstrap/cache
@@ -88,61 +142,10 @@ jobs:
             echo "🗃️ Migrating database..."
             php artisan migrate:fresh --force
             echo "🧹 Clearing caches..."
-            mkdir -p storage/framework/views   # <--- Tambahan penting
+            mkdir -p storage/framework/views
             php artisan config:clear
             php artisan cache:clear
             php artisan view:clear
-          EOF
-
-      - name: Update System and Install Dependencies
-        shell: bash
-        run: |
-          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-            set -e
-            # Update system
-            sudo apt update && sudo apt upgrade -y
-
-            # Add PHP repository
-            sudo apt install -y software-properties-common
-            sudo add-apt-repository -y ppa:ondrej/php
-            sudo apt update
-
-            # Install PHP and dependencies
-            sudo apt install -y nginx php8.2-fpm php8.2-cli php8.2-mbstring php8.2-xml php8.2-zip
-
-            # Configure PHP-FPM
-            sudo sed -i 's/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/' /etc/php/8.2/fpm/php.ini
-            sudo systemctl restart php8.2-fpm
-
-            # Configure Nginx
-            sudo bash -c 'cat > /etc/nginx/sites-available/laravel <<EOF
-            server {
-                listen 80;
-                server_name _;
-                root /home/$(whoami)/laravel-app/public;
-                index index.php index.html index.htm;
-
-                location / {
-                    try_files \$uri \$uri/ /index.php?\$query_string;
-                }
-
-                location ~ \.php$ {
-                    include snippets/fastcgi-php.conf;
-                    fastcgi_pass unix:/run/php/php8.2-fpm.sock;
-                }
-
-                location ~ /\.ht {
-                    deny all;
-                }
-            }
-            EOF'
-
-            # Enable Nginx configuration
-            sudo ln -s /etc/nginx/sites-available/laravel /etc/nginx/sites-enabled/
-            sudo nginx -t && sudo systemctl restart nginx
-
-            # Setup user permissions
-            sudo usermod -aG www-data $(whoami)
           EOF
 
       - name: Start Application Services
@@ -152,7 +155,7 @@ jobs:
             set -e
             echo "♻️ Restarting services..."
             sudo systemctl restart nginx
-            sudo systemctl restart php8.4-fpm
+            sudo systemctl restart php8.2-fpm
             echo "🚀 Starting Laravel development server..."
             cd ~/laravel-app
             sudo pkill -f "php artisan serve" || true
@@ -167,22 +170,21 @@ jobs:
             set -e
             echo "✅ Checking services..."
             sudo systemctl is-active nginx || (echo "Nginx is not running!" && exit 1)
-            sudo systemctl is-active php8.4-fpm || (echo "PHP-FPM is not running!" && exit 1)
+            sudo systemctl is-active php8.2-fpm || (echo "PHP-FPM is not running!" && exit 1)
             echo "🌐 Checking web server..."
             curl -sSf http://localhost:8000 || (echo "Laravel server not responding!" && exit 1)
           EOF
 
       - name: Tests and Generate Coverage
         shell: bash
-        continue-on-error: true # This allows the workflow to continue even if tests fail
+        continue-on-error: true
         run: |
           ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-            set +e  # Disable immediate exit on error to capture coverage even if tests fail
+            set +e
             cd ~/laravel-app
             echo "🔍 Running tests (may fail but will still generate coverage)..."
             ./vendor/bin/pest --coverage-html=coverage-report --coverage-clover=coverage.xml || true
             echo "📊 Test execution completed (ignoring failures)"
-            # Always try to generate the coverage report
             if [ -f coverage.xml ]; then
               echo "✅ Coverage report generated successfully"
               echo "Coverage Summary:"
@@ -190,15 +192,14 @@ jobs:
                 awk '{sum += $1; count++} END {print "Average coverage: " sum/count*100 "%"}'
             else
               echo "❌ Failed to generate coverage report"
-              exit 0  # Still continue the workflow
+              exit 0
             fi
-            # Always show the last 20 lines of Laravel log for debugging
             echo "📝 Last 20 lines of Laravel log:"
             tail -20 ~/laravel.log || echo "No Laravel log found"
           EOF
 
       - name: Upload Coverage Reports
-        if: always() # Always upload artifacts even if previous steps fail
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-reports
