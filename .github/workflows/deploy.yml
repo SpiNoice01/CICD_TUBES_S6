@@ -104,8 +104,12 @@ jobs:
           ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
             set -e
             echo "♻️ Restarting services..."
+            sudo apt update
+            sudo apt install -y nginx
+            sudo systemctl enable nginx
             sudo systemctl restart nginx
-            sudo systemctl restart php8.4-fpm
+
+
             echo "🚀 Starting Laravel development server..."
             cd ~/laravel-app
             sudo pkill -f "php artisan serve" || true
