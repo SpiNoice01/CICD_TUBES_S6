@@ -43,6 +43,30 @@ jobs:
             --exclude='node_modules' \
             ./ ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/
 
+      - name: Install MySQL and PHP Extensions
+        shell: bash
+        run: |
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
+          set -e
+          echo "🔧 Installing MySQL and PHP extensions..."
+          sudo apt update
+          sudo apt install -y mysql-server php8.2-mysql
+          sudo systemctl start mysql
+          sudo systemctl enable mysql
+          EOF
+
+      - name: Configure MySQL
+        shell: bash
+        run: |
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'MYSQL_EOF'
+          set -e
+          echo "🔧 Configuring MySQL..."
+          sudo mysql -e "CREATE DATABASE IF NOT EXISTS laravel;"
+          sudo mysql -e "CREATE USER IF NOT EXISTS 'laravel'@'localhost' IDENTIFIED BY '${{ secrets.DB_PASSWORD }}';"
+          sudo mysql -e "GRANT ALL PRIVILEGES ON laravel.* TO 'laravel'@'localhost';"
+          sudo mysql -e "FLUSH PRIVILEGES;"
+          MYSQL_EOF
+
       - name: Install Composer on Remote Server
         shell: bash
         run: |
@@ -134,6 +158,7 @@ jobs:
             cd ~/laravel-app
             sudo chown -R $USER:www-data storage bootstrap/cache
             sudo chmod -R 775 storage bootstrap/cache
+
             echo "🌱 Setting up environment..."
             if [ ! -f .env ]; then
               cp .env.example .env
@@ -142,6 +167,7 @@ jobs:
             else
               echo "✅ .env already exists, skipping key generation"
             fi
+
             echo "📦 Creating SQLite database file..."
             if [ ! -f database/database.sqlite ]; then
               mkdir -p database
@@ -150,6 +176,7 @@ jobs:
             else
               echo "✅ SQLite database file already exists"
             fi
+
             echo "📦 Installing Composer dependencies..."
             composer install --optimize-autoloader --ignore-platform-reqs
             echo "🗃️ Migrating database..."
