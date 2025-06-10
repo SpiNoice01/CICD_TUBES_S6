@@ -85,7 +85,7 @@ jobs:
           ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
             set -e
             sudo systemctl restart nginx
-            sudo systemctl restart php8.4-fpm
+            sudo systemctl restart php8.2-fpm
 
             cd ~/laravel-app
             sudo pkill -f "php artisan serve" || true
@@ -99,7 +99,7 @@ jobs:
           ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
             set -e
             sudo systemctl is-active nginx || (echo "Nginx is not running!" && exit 1)
-            sudo systemctl is-active php8.4-fpm || (echo "PHP-FPM is not running!" && exit 1)
+            sudo systemctl is-active php8.2-fpm || (echo "PHP-FPM is not running!" && exit 1)
             curl -sSf http://localhost:8000 || (echo "Laravel server not responding!" && exit 1)
           EOF
 
