@@ -108,27 +108,40 @@ jobs:
             echo "🌱 Setting up environment..."
             if [ ! -f .env ]; then
               cp .env.example .env || { echo "❌ Failed to copy .env file"; exit 1; }
-              echo "APP_ENV=production" >> .env
-              echo "APP_DEBUG=false" >> .env
-              echo "APP_URL=http://${{ secrets.SSH_HOST }}" >> .env
-              echo "ASSET_URL=http://${{ secrets.SSH_HOST }}" >> .env
-              echo "VITE_APP_URL=http://${{ secrets.SSH_HOST }}" >> .env
             fi
+            sed -i 's/^APP_ENV=.*/APP_ENV=production/' .env
+            sed -i 's/^APP_DEBUG=.*/APP_DEBUG=false/' .env
+            sed -i 's|^APP_URL=.*|APP_URL=http://${{ secrets.SSH_HOST }}|' .env
+            sed -i 's|^ASSET_URL=.*|ASSET_URL=http://${{ secrets.SSH_HOST }}|' .env
+            sed -i 's|^VITE_APP_URL=.*|VITE_APP_URL=http://${{ secrets.SSH_HOST }}|' .env
+
             if ! grep -q "^APP_KEY=base64:" .env; then
               echo "🔐 Generating Laravel APP_KEY..."
               php artisan key:generate || { echo "❌ Failed to generate APP_KEY"; exit 1; }
             fi
+
             echo "🗃️ Migrating database..."
-            php artisan cache:table || true
-            php artisan session:table || true
             php artisan migrate --force || { echo "❌ Failed to migrate database"; exit 1; }
+
+            echo "🔗 Creating storage symlink..."
+            php artisan storage:link || echo "⚠️ Failed to create storage symlink"
+
             echo "📁 Ensuring compiled view directory exists..."
             mkdir -p storage/framework/views || { echo "❌ Failed to create compiled view directory"; exit 1; }
+
             echo "🧹 Clearing caches..."
-            php artisan config:clear || { echo "❌ Failed to clear config cache"; exit 1; }
-            php artisan cache:clear || { echo "❌ Failed to clear application cache"; exit 1; }
-            php artisan view:clear || { echo "❌ Failed to clear view cache"; exit 1; }
+            php artisan config:clear
+            php artisan cache:clear
+            php artisan view:clear
+            php artisan route:clear
+
+            echo "⚡ Caching configuration, routes, and views..."
+            php artisan config:cache || { echo "❌ Failed to cache config"; exit 1; }
+            php artisan route:cache || { echo "❌ Failed to cache routes"; exit 1; }
+            php artisan view:cache || { echo "❌ Failed to cache views"; exit 1; }
+
             echo "✅ Remote setup and deployment completed successfully."
+
           EOF
 
       - name: Run Tests and Generate Coverage
