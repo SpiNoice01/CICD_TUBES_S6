@@ -1,223 +1,188 @@
-name: Deploy Laravel to Azure VM and Analyze with SonarCloud
+name: Deploy Laravel to Azure VM with SonarCloud Analysis
 
 on:
   push:
     branches: [main]
 
+env:
+  PHP_VERSION: "8.2"
+  NODE_VERSION: "18"
+  APP_DIR: "~/laravel-app"
+  SSH_KEY_PATH: "~/.ssh/id_rsa"
+
 jobs:
-  deploy:
+  deploy-and-analyze:
+    name: Deploy & Analyze
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Required for SonarCloud analysis
 
-      - name: Increase file watcher limit
+      - name: Configure system for file watching
         run: |
-          echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.conf
-          echo fs.inotify.max_user_instances=1024 | sudo tee -a /etc/sysctl.conf
+          echo "Increasing file watcher limits..."
+          echo "fs.inotify.max_user_watches=524288" | sudo tee -a /etc/sysctl.conf
+          echo "fs.inotify.max_user_instances=1024" | sudo tee -a /etc/sysctl.conf
           sudo sysctl -p
-          echo "✅ File watcher limits updated:"
-          sysctl fs.inotify.max_user_watches
-          sysctl fs.inotify.max_user_instances
+          echo "✅ New limits:"
+          sysctl fs.inotify.{max_user_watches,max_user_instances}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: "${{ env.NODE_VERSION }}"
+          cache: "npm"
 
-      - name: Install npm dependencies
-        run: npm ci
-
-      # - name: Build assets
-      #   run: npm run build
-
-      - name: Setup SSH Key
+      - name: Configure SSH access
         run: |
           mkdir -p ~/.ssh
-          printf "%s\n" "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
-          echo -e "Host *\n  StrictHostKeyChecking no" > ~/.ssh/config
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > "${{ env.SSH_KEY_PATH }}"
+          chmod 600 "${{ env.SSH_KEY_PATH }}"
 
-      - name: Deploy with rsync
+          # Configure SSH client
+          cat <<EOT >> ~/.ssh/config
+          Host azure-vm
+            HostName ${{ secrets.SSH_HOST }}
+            User ${{ secrets.SSH_USERNAME }}
+            IdentityFile ${{ env.SSH_KEY_PATH }}
+            StrictHostKeyChecking no
+          EOT
+
+      - name: Deploy application files
         run: |
           rsync -avz --no-perms --no-owner --no-group --delete \
-            -e "ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no" \
-            --exclude='.git' \
-            --exclude='.env' \
-            --exclude='storage/*' \
-            --exclude='node_modules' \
-            ./ ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/
+            -e "ssh -i ${{ env.SSH_KEY_PATH }}" \
+            --exclude={.git,.env,storage/*,node_modules,.idea} \
+            ./ azure-vm:${{ env.APP_DIR }}/
 
-      - name: Remote Setup & Deploy
+      - name: Setup server environment
         run: |
-          ssh -i ~/.ssh/id_rsa ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-            set -e
+          ssh azure-vm << 'REMOTE_SCRIPT'
+          set -euo pipefail
 
-            echo "🛠️ Installing PHP 8.2 and extensions..."
-            sudo apt-get update -y
-            sudo apt-get install -y software-properties-common
-            sudo add-apt-repository ppa:ondrej/php -y
-            sudo apt-get update -y
+          # Helper function for error handling
+          fail() { echo "❌ Error: $1" >&2; exit 1; }
 
-            sudo apt-get install -y php8.2 php8.2-cli php8.2-mbstring php8.2-xml php8.2-bcmath php8.2-curl php8.2-zip php8.2-mysql php8.2-sqlite3 unzip curl
+          echo "🛠️ Installing PHP ${{ env.PHP_VERSION }} and extensions..."
+          sudo apt-get update -y || fail "Failed to update packages"
+          sudo apt-get install -y software-properties-common || fail "Failed to install common packages"
+          sudo add-apt-repository ppa:ondrej/php -y || fail "Failed to add PHP repo"
+          sudo apt-get update -y || fail "Failed to update after adding repo"
 
-            echo "🛠️ Installing Node.js and npm..."
-            curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-            sudo apt-get install -y nodejs
-            echo "✅ Node.js and npm installed:"
-            node -v
-            npm -v
+          sudo apt-get install -y \
+            php${{ env.PHP_VERSION }} \
+            php${{ env.PHP_VERSION }}-{cli,mbstring,xml,bcmath,curl,zip,mysql,sqlite3} \
+            unzip curl nginx || fail "Failed to install PHP packages"
 
-            echo "📦 Installing Composer (if needed)..."
-            if ! command -v composer &> /dev/null; then
-              php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
-              php composer-setup.php || { echo "❌ Failed to install Composer"; exit 1; }
-              sudo mv composer.phar /usr/local/bin/composer
-              sudo chmod +x /usr/local/bin/composer
-              rm composer-setup.php
-            fi
-            echo "✅ Composer installed:"
-            composer --version
+          echo "🛠️ Installing Node.js..."
+          curl -fsSL https://deb.nodesource.com/setup_${{ env.NODE_VERSION }}.x | sudo -E bash - || fail "Failed to setup Node.js"
+          sudo apt-get install -y nodejs || fail "Failed to install Node.js"
 
-            echo "📦 Installing Laravel dependencies..."
-            cd ~/laravel-app || { echo "❌ Laravel app directory not found"; exit 1; }
-            composer install --optimize-autoloader --ignore-platform-reqs || { echo "❌ Failed to install Laravel dependencies"; exit 1; }
+          echo "📦 Installing Composer..."
+          if ! command -v composer &> /dev/null; then
+            EXPECTED_CHECKSUM="$(php -r 'copy("https://composer.github.io/installer.sig", "php://stdout");')"
+            php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
+            ACTUAL_CHECKSUM="$(php -r "echo hash_file('sha384', 'composer-setup.php');")"
 
-            echo "📦 Installing test dependencies..."
-            composer require pestphp/pest pestphp/pest-plugin-laravel --dev --no-interaction --ignore-platform-reqs || { echo "❌ Failed to install test dependencies"; exit 1; }
-
-            echo "🌐 Installing Nginx web server..."
-            sudo apt update -y
-            sudo apt install -y nginx
-            echo "✅ Nginx installed:"
-            nginx -v
-
-            echo "🛡️ Setting up firewall rules..."
-            sudo ufw allow OpenSSH
-            sudo ufw allow 80/tcp
-            sudo ufw allow 8080/tcp
-            sudo ufw allow 5173/tcp
-            sudo ufw --force enable
-            echo "✅ Firewall rules configured:"
-            sudo ufw status verbose
-
-            echo "🔧 Setting PHP 8.2 as default..."
-            sudo update-alternatives --set php /usr/bin/php8.2
-            echo "✅ PHP version set to:"
-            php -v
-
-            echo "📦 Installing npm dependencies..."
-            npm ci || { echo "❌ Failed to install npm dependencies"; exit 1; }
-            npm run dev -- --host 0.0.0.0 || { echo "❌ Failed to build frontend"; exit 1; }
-
-            echo "🔧 Fixing permissions..."
-            sudo chown -R $USER:www-data storage bootstrap/cache
-            sudo chmod -R ug+rwx storage bootstrap/cache
-            echo "✅ Permissions fixed."
-
-            echo "🌱 Setting up environment..."
-            if [ ! -f .env ]; then
-              cp .env.example .env || { echo "❌ Failed to copy .env file"; exit 1; }
+            if [ "$EXPECTED_CHECKSUM" != "$ACTUAL_CHECKSUM" ]; then
+              fail "Composer installer checksum verification failed"
             fi
 
-            if ! grep -q "^APP_KEY=base64:" .env; then
-              echo "🔐 Generating Laravel APP_KEY..."
-              php artisan key:generate || { echo "❌ Failed to generate APP_KEY"; exit 1; }
-            fi
+            php composer-setup.php --quiet || fail "Composer installation failed"
+            sudo mv composer.phar /usr/local/bin/composer
+            sudo chmod +x /usr/local/bin/composer
+            rm composer-setup.php
+          fi
 
-            echo "🗃️ Migrating database..."
-            php artisan cache:table || true
-            php artisan session:table || true
-            php artisan migrate --force || { echo "❌ Failed to migrate database"; exit 1; }
+          echo "🔧 Configuring environment..."
+          cd ${{ env.APP_DIR }} || fail "App directory not found"
 
-            echo "📁 Ensuring compiled view directory exists..."
-            mkdir -p storage/framework/views || { echo "❌ Failed to create compiled view directory"; exit 1; }
+          # Install dependencies
+          composer install --optimize-autoloader --no-interaction --ignore-platform-reqs || fail "Composer install failed"
+          npm ci || fail "npm install failed"
 
-            echo "🧹 Clearing caches..."
-            php artisan config:clear || { echo "❌ Failed to clear config cache"; exit 1; }
-            php artisan cache:clear || { echo "❌ Failed to clear application cache"; exit 1; }
-            php artisan view:clear || { echo "❌ Failed to clear view cache"; exit 1; }
+          # Setup environment file
+          if [ ! -f .env ]; then
+            cp .env.example .env || fail "Failed to create .env file"
+            php artisan key:generate || fail "Failed to generate app key"
+          fi
 
-            echo "✅ Remote setup and deployment completed successfully."
-          EOF
+          # Database setup
+          php artisan migrate --force || fail "Database migration failed"
 
-      - name: Start Laravel App
+          # Permissions
+          sudo chown -R $USER:www-data storage bootstrap/cache
+          sudo chmod -R ug+rwx storage bootstrap/cache
+
+          # Clear caches
+          php artisan config:clear
+          php artisan view:clear
+          php artisan cache:clear
+
+          echo "✅ Server setup completed successfully"
+          REMOTE_SCRIPT
+
+      - name: Start application servers
         run: |
-          ssh -i ~/.ssh/id_rsa ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-          set -e
-          echo "🚀 Starting Laravel dev server and Vite..."
+          ssh azure-vm << 'REMOTE_SCRIPT'
+          set -euo pipefail
 
-          cd ~/laravel-app
+          cd ${{ env.APP_DIR }}
 
-          # Increase file watcher limit
-          echo "🔧 Increasing file watcher limit..."
-          echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.conf
-          echo fs.inotify.max_user_instances=1024 | sudo tee -a /etc/sysctl.conf
-          sudo sysctl -p
+          # Stop existing processes
+          pkill -f "php artisan serve" || true
+          pkill -f "vite" || true
 
-          # Stop previous Laravel dev server (if any)
-          sudo pkill -f "php artisan serve" || true
+          # Start Laravel server
           nohup php artisan serve --host=0.0.0.0 --port=8080 > ~/laravel.log 2>&1 &
 
-          # Stop previous Vite dev server (if any)
-          sudo pkill -f "vite" || true
+          # Start Vite
+          nohup npm run dev -- --host 0.0.0.0 > ~/vite.log 2>&1 &
 
-          echo "🔍 Starting Vite dev server..."
-          nohup ./node_modules/.bin/vite --host 0.0.0.0 > ~/vite.log 2>&1 &
+          sleep 10  # Wait for servers to start
 
-          sleep 10  # ⏳ Wait for servers to start
-
-          echo "🧪 Verifying Laravel server..."
-          if curl -s http://localhost:8080 | grep -q '<!DOCTYPE'; then
-            echo "✅ Laravel server is running."
-          else
-            echo "❌ Laravel server might not be running properly."
+          # Verify servers
+          if ! curl -s http://localhost:8080 | grep -q '<!DOCTYPE'; then
+            echo "❌ Laravel server failed to start"
             tail -n 20 ~/laravel.log
             exit 1
           fi
 
-          echo "🧪 Verifying Vite dev server..."
           VITE_PORT=$(grep -oP 'Network: http://.*:\K[0-9]+' ~/vite.log | head -n 1)
-          if [ -z "$VITE_PORT" ]; then
-            echo "❌ Could not detect Vite port."
+          if [ -z "$VITE_PORT" ] || ! curl -s http://localhost:$VITE_PORT/@vite/client | grep -q 'vite'; then
+            echo "❌ Vite server failed to start"
             tail -n 20 ~/vite.log
             exit 1
           fi
 
-          if curl -s http://localhost:$VITE_PORT/@vite/client | grep -q 'vite'; then
-            echo "✅ Vite dev server is running on port $VITE_PORT."
-          else
-            echo "❌ Vite dev server might not be running properly."
-            tail -n 20 ~/vite.log
-            exit 1
-          fi
+          echo "🌐 Application URLs:"
+          echo "Laravel: http://${{ secrets.SSH_HOST }}:8080"
+          echo "Vite: http://${{ secrets.SSH_HOST }}:$VITE_PORT"
+          REMOTE_SCRIPT
 
-          echo ""
-          echo "🌐 You can now access the app at:"
-          echo "➡️  Laravel: http://${{ secrets.SSH_HOST }}:8080"
-          echo "➡️  Vite client: http://${{ secrets.SSH_HOST }}:$VITE_PORT/@vite/client"
-          EOF
-
-      - name: Run Tests and Generate Coverage
+      - name: Run tests and generate coverage
         continue-on-error: true
         run: |
-          ssh -i ~/.ssh/id_rsa ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-            set +e
-            cd ~/laravel-app
-            ./vendor/bin/pest --coverage-html=coverage-report --coverage-clover=coverage.xml || true
-            if [ -f coverage.xml ]; then
-              echo "✅ Coverage generated"
-              grep -oP 'filename.*?line-rate="\K[^"]+' coverage.xml | awk '{sum += $1} END {print "Avg coverage: " sum/NR*100 "%"}'
-            else
-              echo "❌ Coverage report not found"
-            fi
-            tail -20 ~/laravel.log || echo "No Laravel log found"
-          EOF
+          ssh azure-vm << 'REMOTE_SCRIPT'
+          set +e
+          cd ${{ env.APP_DIR }}
 
-      - name: Upload Coverage Reports
-        if: always()
+          # Run tests with coverage
+          ./vendor/bin/pest --coverage-html=coverage-report --coverage-clover=coverage.xml
+
+          if [ -f coverage.xml ]; then
+            COVERAGE=$(grep -oP 'filename.*?line-rate="\K[^"]+' coverage.xml | awk '{sum += $1} END {print sum/NR*100}')
+            echo "coverage_percentage=$COVERAGE" >> $GITHUB_OUTPUT
+            echo "✅ Test coverage: ${COVERAGE}%"
+          else
+            echo "❌ Coverage report not generated"
+          fi
+          REMOTE_SCRIPT
+
+      - name: Upload coverage reports
         uses: actions/upload-artifact@v4
         with:
           name: coverage-reports
@@ -226,11 +191,25 @@ jobs:
             coverage.xml
           retention-days: 1
 
-      - name: Final Status Report
-        if: always()
+      - name: SonarCloud analysis
+        if: success() || failure() # Always run even if previous steps failed
+        uses: sonarsource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.projectKey=your-project-key
+            -Dsonar.organization=your-org
+            -Dsonar.host.url=https://sonarcloud.io
+            -Dsonar.php.coverage.reportPaths=coverage.xml
+            -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
+
+      - name: Final status
         run: |
+          echo "Deployment status: ${{ job.status }}"
           if [ "${{ job.status }}" == 'success' ]; then
-            echo "✅ Deployment complete"
+            echo "🚀 Deployment successful!"
           else
-            echo "⚠️ Completed with warnings"
+            echo "⚠️ Deployment completed with warnings"
           fi
