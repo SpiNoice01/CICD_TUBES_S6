@@ -41,108 +41,96 @@ jobs:
             --exclude='.env' \
             --exclude='storage/*' \
             --exclude='node_modules' \
-            --include='public/build/' \
             ./ ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/
-
-      - name: Restart Services
-        shell: bash
-        run: |
-          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-            set -e
-            echo "♻️ Restarting services..."
-            sudo systemctl restart nginx
-            sudo systemctl restart php8.2-fpm
-          EOF
 
       - name: Remote Setup & Deploy
         shell: bash
         run: |
           ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-          set -e
-          cd ~/laravel-app
-
-          # Create required directories
-          echo "📂 Creating required directories..."
-          mkdir -p storage/framework/{cache,sessions,views}
-          mkdir -p bootstrap/cache
-
-          # Fix permissions (pre-composer)
-          echo "🔧 Setting initial permissions..."
-          sudo chown -R $USER:www-data storage bootstrap/cache
-          sudo chmod -R 775 storage bootstrap/cache
-
-          # Install system dependencies
-          echo "📦 Installing system dependencies..."
-          sudo apt-get update
-          sudo apt-get install -y php-sqlite3 unzip curl php-mbstring php-xml
-
-          # Install Composer if missing
-          if ! command -v composer &> /dev/null; then
-            echo "⬇️ Downloading Composer..."
-            php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
-            EXPECTED_SIGNATURE=$(php -r "copy('https://composer.github.io/installer.sig', 'php://stdout');")
-            ACTUAL_SIGNATURE=$(php -r "echo hash_file('sha384', 'composer-setup.php');")
-
-            if [ "$EXPECTED_SIGNATURE" != "$ACTUAL_SIGNATURE" ]; then
-              >&2 echo "❌ Composer installer corrupt"
-              rm -f composer-setup.php
-              exit 1
+            set -e
+            cd ~/laravel-app
+            echo "🔧 Fixing permissions..."
+            sudo chown -R $USER:www-data storage bootstrap/cache
+            sudo chmod -R 775 storage bootstrap/cache
+            echo "🌱 Setting up environment..."
+            if [ ! -f .env ]; then
+              cp .env.example .env
+              php artisan key:generate
+              echo "✅ Application key generated and saved to .env"
+            else
+              echo "✅ .env already, exists skipping key generation"
             fi
-
-            php composer-setup.php
-            sudo mv composer.phar /usr/local/bin/composer
-            sudo chmod +x /usr/local/bin/composer
-            rm -f composer-setup.php
-            echo "✅ Composer installed successfully"
-          fi
-
-          # Handle environment file
-          echo "🌱 Setting up environment..."
-          if [ ! -f .env ]; then
-            cp .env.example .env
-            echo "✅ Created .env from example"
-          else
-            echo "ℹ️ .env already exists"
-          fi
-
-          # Install Composer dependencies (without dev dependencies first)
-          echo "📦 Installing production dependencies..."
-          composer install --no-dev --optimize-autoloader --no-interaction
-
-          # Generate application key if not set
-          if ! grep -q '^APP_KEY=base64:' .env; then
-            php artisan key:generate
-            echo "🔑 Generated application key"
-          fi
-
-          # Install dev dependencies only if needed
-          echo "🧪 Installing test dependencies..."
-          composer require pestphp/pest pestphp/pest-plugin-laravel --dev --no-interaction
-
-          # Run database migrations
-          echo "🗃️ Migrating database..."
-          php artisan migrate --force
-
-          # Fix permissions again (post-composer)
-          echo "🔧 Finalizing permissions..."
-          sudo chown -R $USER:www-data storage bootstrap/cache vendor
-          sudo chmod -R 775 storage bootstrap/cache
-
-          # Create storage link
-          php artisan storage:link
-
-          # Optimize application
-          echo "⚡ Optimizing application..."
-          php artisan config:cache
-          php artisan route:cache
-          php artisan view:cache
-
-          echo "🎉 Deployment setup completed successfully!"
+            echo "📦 Installing PHP dependencies..."
+            sudo apt-get update
+            sudo apt-get install -y php-sqlite3 unzip curl
+            if ! [ -x "$(command -v composer)" ]; then
+              php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
+              EXPECTED_SIGNATURE="$(php -r 'copy(\"https://composer.github.io/installer.sig\", \"php://stdout\");')"
+              php -r "if (hash_file('sha384', 'composer-setup.php') === '$EXPECTED_SIGNATURE') { echo 'Installer verified'; } else { echo 'Installer corrupt'; unlink('composer-setup.php'); exit(1); }"
+              php composer-setup.php
+              sudo mv composer.phar /usr/local/bin/composer
+              sudo chmod +x /usr/local/bin/composer
+              php -r "unlink('composer-setup.php');"
+            fi
+            echo "Installing Composer dependencies..."
+            composer install --optimize-autoloader --ignore-platform-reqs
+            echo "Installing test dependencies..."
+            composer require pestphp/pest pestphp/pest-plugin-laravel --dev --no-interaction --ignore-platform-reqs
+            echo "🗃️ Migrating database..."
+            php artisan cache:table || true
+            php artisan session:table || true
+            php artisan migrate --force
+            echo "🧹 Clearing caches..."
+            php artisan config:clear
+            php artisan cache:clear
+            php artisan view:clear
           EOF
 
-      - name: Build assets
+      - name: Update System and Install Dependencies
+        shell: bash
         run: |
-          npm run build
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
+            set -e
+            # Update sistem
+            sudo apt update && sudo apt upgrade -y
+
+            # Install dependensi dasar
+            sudo apt install -y nginx php8.4-fpm php8.4-cli php8.4-mbstring php8.4-xml php84.-zip
+
+            # Konfigurasi PHP-FPM
+            sudo sed -i 's/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/' /etc/php/8.4/fpm/php.ini
+            sudo systemctl restart php8.4-fpm
+
+            # Konfigurasi Nginx (buat file config baru)
+            sudo bash -c 'cat > /etc/nginx/sites-available/laravel <<EOF
+            server {
+                listen 80;
+                server_name _;
+                root /home/$(whoami)/laravel-app/public;
+                index index.php index.html index.htm;
+
+                location / {
+                    try_files \$uri \$uri/ /index.php?\$query_string;
+                }
+
+                location ~ \.php$ {
+                    include snippets/fastcgi-php.conf;
+                    fastcgi_pass unix:/run/php/php8.4-fpm.sock;
+                }
+
+                location ~ /\.ht {
+                    deny all;
+                }
+            }
+            EOF'
+
+            # Aktifkan konfigurasi Nginx
+            sudo ln -s /etc/nginx/sites-available/laravel /etc/nginx/sites-enabled/
+            sudo nginx -t && sudo systemctl restart nginx
+
+            # Setup user permissions
+            sudo usermod -aG www-data $(whoami)
+          EOF
 
       - name: Start Application Services
         shell: bash
@@ -151,13 +139,14 @@ jobs:
             set -e
             echo "♻️ Restarting services..."
             sudo systemctl restart nginx
-            sudo systemctl restart php8.2-fpm
+            sudo systemctl restart php8.4-fpm
             echo "🚀 Starting Laravel development server..."
             cd ~/laravel-app
             sudo pkill -f "php artisan serve" || true
-            nohup php artisan serve --host=0.0.0.0 --port=8080 > ~/laravel.log 2>&1 &
+            nohup php artisan serve --host=0.0.0.0 --port=8000 > ~/laravel.log 2>&1 &
             disown
           EOF
+
       - name: Verify Services
         shell: bash
         run: |
@@ -165,11 +154,12 @@ jobs:
             set -e
             echo "✅ Checking services..."
             sudo systemctl is-active nginx || (echo "Nginx is not running!" && exit 1)
-            sudo systemctl is-active php8.2-fpm || (echo "PHP-FPM is not running!" && exit 1)
+            sudo systemctl is-active php8.4-fpm || (echo "PHP-FPM is not running!" && exit 1)
             echo "🌐 Checking web server..."
-            curl -sSf http://localhost:8080 || (echo "Laravel server not responding!" && exit 1)
+            curl -sSf http://localhost:8000 || (echo "Laravel server not responding!" && exit 1)
           EOF
-      - name: Run Tests and Generate Coverage
+
+      - name: Tests and Generate Coverage
         shell: bash
         continue-on-error: true # This allows the workflow to continue even if tests fail
         run: |
@@ -193,6 +183,7 @@ jobs:
             echo "📝 Last 20 lines of Laravel log:"
             tail -20 ~/laravel.log || echo "No Laravel log found"
           EOF
+
       - name: Upload Coverage Reports
         if: always() # Always upload artifacts even if previous steps fail
         uses: actions/upload-artifact@v4
@@ -212,6 +203,7 @@ jobs:
             echo "⚠️ Workflow completed with warnings (some non-critical steps failed)"
             echo "Coverage reports should still be available in artifacts"
           fi
+
       - name: Verify Website Accessibility
         run: |
-          curl -sSf http://${{ secrets.SSH_HOST }}:8080 || (echo "❌ Website is not accessible!" && exit 1)
+          curl -sSf http://${{ secrets.SSH_HOST }}:8000 || (echo "❌ Website is not accessible!" && exit 1)
