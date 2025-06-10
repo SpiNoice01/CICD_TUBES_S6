@@ -60,6 +60,7 @@ jobs:
             else
               echo "✅ .env already exists, skipping key generation"
             fi
+
             echo "📦 Installing PHP dependencies..."
             sudo apt-get update
             sudo apt-get install -y php-sqlite3 unzip curl
@@ -81,14 +82,20 @@ jobs:
             composer install --optimize-autoloader --ignore-platform-reqs
             echo "Installing test dependencies..."
             composer require pestphp/pest pestphp/pest-plugin-laravel --dev --no-interaction --ignore-platform-reqs
+
             echo "🗃️ Migrating database..."
             php artisan cache:table || true
             php artisan session:table || true
             php artisan migrate --force
+
             echo "🧹 Clearing caches..."
             php artisan config:clear
             php artisan cache:clear
-            php artisan view:clear
+
+            # Ensure view cache path exists
+            mkdir -p storage/framework/views
+            chmod -R 775 storage/framework/views
+            php artisan view:clear || echo "⚠️ View path not found. Skipping view:clear."
           EOF
 
       - name: Start Application Services
