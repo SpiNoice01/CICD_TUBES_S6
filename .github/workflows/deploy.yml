@@ -156,4 +156,4 @@ jobs:
 
       - name: Verify Website Accessibility
         run: |
-          curl -sSf http://${{ secrets.SSH_HOST }}:8000 || (echo "❌ Website is not accessible!" && exit 1)
+          curl -sSf http://${{ secrets.SSH_HOST }}:8080 || (echo "❌ Website is not accessible!" && exit 1)
