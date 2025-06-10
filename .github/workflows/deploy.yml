@@ -90,6 +90,10 @@ jobs:
             php artisan session:table || true
             php artisan migrate --force
 
+            echo "📁 Ensuring compiled view directory exists..."
+            mkdir -p storage/framework/views
+
+
             echo "🧹 Clearing caches..."
             php artisan config:clear
             php artisan cache:clear
