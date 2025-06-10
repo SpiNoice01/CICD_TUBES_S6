@@ -164,9 +164,14 @@ jobs:
           ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
             set +e
             cd ~/laravel-app
+            php -v
+            php -m | grep -E 'xdebug|pcov'
             echo "🔍 Running tests (may fail but will still generate coverage)..."
+            ./vendor/bin/pest --version || echo "Pest not installed"
             ./vendor/bin/pest --coverage-html=coverage-report --coverage-clover=coverage.xml || true
             echo "📊 Test execution completed (ignoring failures)"
+            ls -lh coverage.xml || echo "No coverage.xml generated"
+            ls -lh coverage-report || echo "No coverage-report dir"
             if [ -f coverage.xml ]; then
               echo "✅ Coverage report generated successfully"
               echo "Coverage Summary:"
@@ -183,10 +188,8 @@ jobs:
       - name: Download Coverage Report from VM
         if: always()
         run: |
-          scp -o StrictHostKeyChecking=no \
-            ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/coverage.xml .
-          scp -r -o StrictHostKeyChecking=no \
-            ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/coverage-report .
+          scp -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/coverage.xml . || true
+          scp -r -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/coverage-report . || true
 
       - name: Upload Coverage Reports
         if: always()
