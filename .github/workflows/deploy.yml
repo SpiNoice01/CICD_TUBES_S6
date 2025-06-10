@@ -76,40 +76,41 @@ jobs:
             sudo sed -i 's/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/' /etc/php/8.2/fpm/php.ini
             sudo systemctl restart php8.2-fpm
 
-            # Configure Nginx
-            sudo bash -c 'cat > /etc/nginx/sites-available/laravel <<EOL
-            server {
-                listen 80;
-                server_name _;
-                root /home/$(whoami)/laravel-app/public;
-                index index.php index.html index.htm;
+      - name: Configure Nginx
+        shell: bash
+        run: |
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'NGINX_EOF'
+          set -e
+          sudo bash -c 'cat > /etc/nginx/sites-available/laravel << "EOL"
+          server {
+          listen 80;
+          server_name _;
+          root /home/$USER/laravel-app/public;
+          index index.php index.html index.htm;
 
-                location / {
-                    try_files \$uri \$uri/ /index.php?\$query_string;
-                }
+          location / {
+              try_files \$uri \$uri/ /index.php?\$query_string;
+          }
 
-                location ~ \.php$ {
-                    include snippets/fastcgi-php.conf;
-                    fastcgi_pass unix:/run/php/php8.2-fpm.sock;
-                }
+          location ~ \.php$ {
+              include snippets/fastcgi-php.conf;
+              fastcgi_pass unix:/run/php/php8.2-fpm.sock;
+          }
 
-                location ~ /\.ht {
-                    deny all;
-                }
-            } EOL'
+          location ~ /\.ht {
+              deny all;
+          }
+          }
+          EOL'
 
-            # Enable Nginx configuration
-            sudo ln -sf /etc/nginx/sites-available/laravel /etc/nginx/sites-enabled/laravel
+          # Enable Nginx configuration
+          sudo ln -sf /etc/nginx/sites-available/laravel /etc/nginx/sites-enabled/
+          sudo rm -f /etc/nginx/sites-enabled/default
 
-            # Test Nginx config
-            sudo nginx -t
+          # Test Nginx config
+          sudo nginx -t
 
-            # Restart Nginx
-            sudo systemctl restart nginx
-
-            # Setup user permissions
-            sudo usermod -aG www-data $(whoami)
-          EOF
+          NGINX_EOF
       - name: Remote Setup & Deploy
         shell: bash
         run: |
