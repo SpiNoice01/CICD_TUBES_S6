@@ -129,14 +129,17 @@ jobs:
             coverage.xml
           retention-days: 1
 
-      - name: Analyze with SonarCloud
-        uses: SonarSource/sonarcloud-github-action@master
-        with:
-          projectBaseDir: .
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
-          SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
+      - name: Run Sonar Scanner
+        run: |
+          sonar-scanner \
+            -Dsonar.projectKey=SpiNoice01_CICD_TUBES_S6 \
+            -Dsonar.organization=spinoice01 \
+            -Dsonar.projectName="SpiNoice01 CICD TUBES S6" \
+            -Dsonar.projectVersion=1.0 \
+            -Dsonar.sources=. \
+            -Dsonar.exclusions=node_modules/**,vendor/**,tests/**,*.blade.php \
+            -Dsonar.host.url=https://sonarcloud.io \
+            -Dsonar.login=${{ secrets.SONAR_TOKEN }}
 
       - name: Final Status Report
         if: always()
