@@ -173,6 +173,14 @@ jobs:
             tail -20 ~/laravel.log || echo "No Laravel log found"
           EOF
 
+      - name: Download Coverage Report from VM
+        if: always()
+        run: |
+          scp -o StrictHostKeyChecking=no \
+            ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/coverage.xml .
+          scp -r -o StrictHostKeyChecking=no \
+            ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/coverage-report .
+
       - name: Upload Coverage Reports
         if: always()
         uses: actions/upload-artifact@v4
