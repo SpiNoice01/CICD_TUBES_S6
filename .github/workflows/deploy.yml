@@ -121,58 +121,58 @@ jobs:
       - name: Start Laravel App
         run: |
           ssh -i ~/.ssh/id_rsa ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-            set -e
-            echo "🚀 Starting Laravel dev server and Vite..."
+          set -e
+          echo "🚀 Starting Laravel dev server and Vite..."
 
-            cd ~/laravel-app
+          cd ~/laravel-app
 
-            # Increase file watcher limit
-            echo "🔧 Increasing file watcher limit..."
-            echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.conf
-            echo fs.inotify.max_user_instances=1024 | sudo tee -a /etc/sysctl.conf
-            sudo sysctl -p
+          # Increase file watcher limit
+          echo "🔧 Increasing file watcher limit..."
+          echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.conf
+          echo fs.inotify.max_user_instances=1024 | sudo tee -a /etc/sysctl.conf
+          sudo sysctl -p
 
-            # Stop previous Laravel dev server (if any)
-            sudo pkill -f "php artisan serve" || true
-            nohup php artisan serve --host=0.0.0.0 --port=8080 > ~/laravel.log 2>&1 &
+          # Stop previous Laravel dev server (if any)
+          sudo pkill -f "php artisan serve" || true
+          nohup php artisan serve --host=0.0.0.0 --port=8080 > ~/laravel.log 2>&1 &
 
-            # Stop previous Vite dev server (if any)
-            sudo pkill -f "vite" || true
+          # Stop previous Vite dev server (if any)
+          sudo pkill -f "vite" || true
 
-            echo "🔍 Starting Vite dev server..."
-            nohup ./node_modules/.bin/vite --host 0.0.0.0 > ~/vite.log 2>&1 &
+          echo "🔍 Starting Vite dev server..."
+          nohup ./node_modules/.bin/vite --host 0.0.0.0 > ~/vite.log 2>&1 &
 
-            sleep 10  # ⏳ Wait for servers to start
+          sleep 10  # ⏳ Wait for servers to start
 
-            echo "🧪 Verifying Laravel server..."
-            if curl -s http://localhost:8080 | grep -q '<!DOCTYPE'; then
-              echo "✅ Laravel server is running."
-            else
-              echo "❌ Laravel server might not be running properly."
-              tail -n 20 ~/laravel.log
-              exit 1
-            fi
+          echo "🧪 Verifying Laravel server..."
+          if curl -s http://localhost:8080 | grep -q '<!DOCTYPE'; then
+            echo "✅ Laravel server is running."
+          else
+            echo "❌ Laravel server might not be running properly."
+            tail -n 20 ~/laravel.log
+            exit 1
+          fi
 
-            echo "🧪 Verifying Vite dev server..."
-            VITE_PORT=$(grep -oP 'Network: http://.*:\K[0-9]+' ~/vite.log | head -n 1)
-            if [ -z "$VITE_PORT" ]; then
-              echo "❌ Could not detect Vite port."
-              tail -n 20 ~/vite.log
-              exit 1
-            fi
+          echo "🧪 Verifying Vite dev server..."
+          VITE_PORT=$(grep -oP 'Network: http://.*:\K[0-9]+' ~/vite.log | head -n 1)
+          if [ -z "$VITE_PORT" ]; then
+            echo "❌ Could not detect Vite port."
+            tail -n 20 ~/vite.log
+            exit 1
+          fi
 
-            if curl -s http://localhost:$VITE_PORT/@vite/client | grep -q 'vite'; then
-              echo "✅ Vite dev server is running on port $VITE_PORT."
-            else
-              echo "❌ Vite dev server might not be running properly."
-              tail -n 20 ~/vite.log
-              exit 1
-            fi
+          if curl -s http://localhost:$VITE_PORT/@vite/client | grep -q 'vite'; then
+            echo "✅ Vite dev server is running on port $VITE_PORT."
+          else
+            echo "❌ Vite dev server might not be running properly."
+            tail -n 20 ~/vite.log
+            exit 1
+          fi
 
-            echo ""
-            echo "🌐 You can now access the app at:"
-            echo "➡️  Laravel: http://${{ secrets.SSH_HOST }}:8080"
-            echo "➡️  Vite client: http://${{ secrets.SSH_HOST }}:$VITE_PORT/@vite/client"
+          echo ""
+          echo "🌐 You can now access the app at:"
+          echo "➡️  Laravel: http://${{ secrets.SSH_HOST }}:8080"
+          echo "➡️  Vite client: http://${{ secrets.SSH_HOST }}:$VITE_PORT/@vite/client"
           EOF
 
       - name: Run Tests and Generate Coverage
