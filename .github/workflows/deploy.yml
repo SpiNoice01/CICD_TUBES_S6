@@ -95,7 +95,7 @@ jobs:
 
       - name: Verify Services
         shell: bash
-        run: |
+        run: |a
           ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
             set -e
             sudo systemctl is-active nginx || (echo "Nginx is not running!" && exit 1)
