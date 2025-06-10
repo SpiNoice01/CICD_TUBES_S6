@@ -69,6 +69,13 @@ jobs:
             which npm
             npm -v
 
+            echo "🛡️ Setting up firewall rules..."
+            sudo ufw allow OpenSSH
+            sudo ufw allow 8080/tcp
+            sudo ufw allow 5173/tcp
+            sudo ufw --force enable
+            sudo ufw status verbose
+
             echo "🔧 Setting PHP 8.2 as default..."
             sudo update-alternatives --set php /usr/bin/php8.2
             php -v
@@ -86,8 +93,13 @@ jobs:
             echo "🌱 Setting up environment..."
             if [ ! -f .env ]; then
               cp .env.example .env
+            fi
+
+            if ! grep -q "^APP_KEY=base64:" .env; then
+              echo "🔐 Generating Laravel APP_KEY..."
               php artisan key:generate
             fi
+
 
             echo "📦 Installing Composer (if needed)..."
             if ! command -v composer &> /dev/null; then
