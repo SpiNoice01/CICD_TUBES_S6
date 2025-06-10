@@ -119,14 +119,17 @@ jobs:
             echo "✅ Laravel and Vite are running in the background."
           EOF
 
-      - name: Verify Services
+      - name: Verify Laravel Dev Server
         run: |
-          ssh -i ~/.ssh/id_rsa ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-            set -e
-            sudo systemctl is-active nginx || (echo "Nginx is not running!" && exit 1)
-            sudo systemctl is-active php8.4-fpm || (echo "PHP-FPM is not running!" && exit 1)
-            curl -sSf http://localhost:8000 || (echo "Laravel not responding!" && exit 1)
-          EOF
+          echo "🌐 Verifying Laravel is accessible on port 8000..."
+          sleep 10 # beri waktu server untuk benar-benar start
+          curl -sSf http://${{ secrets.SSH_HOST }}:8000 || (echo "❌ Laravel not responding on port 8000" && exit 1)
+
+      - name: Verify Vite Dev Server
+        run: |
+          echo "🌐 Verifying Vite is accessible on port 5173..."
+          sleep 10 # beri waktu server untuk benar-benar start
+          curl -sSf http://${{ secrets.SSH_HOST }}:5173 || (echo "❌ Vite not responding on port 5173" && exit 1)
 
       - name: Run Tests and Generate Coverage
         continue-on-error: true
