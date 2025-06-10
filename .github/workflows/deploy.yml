@@ -110,57 +110,26 @@ jobs:
           EOF
       - name: Run Tests and Generate Coverage
         shell: bash
-        continue-on-error: true
         run: |
           ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-          set +e
-          cd ~/laravel-app
-          # Create coverage directories if they don't exist
-          mkdir -p coverage-report
-          # Run tests with explicit paths
-          ./vendor/bin/pest --coverage-html=./coverage-report --coverage-clover=./coverage.xml
-          # Verify files were created
-          echo "Generated files:"
-          ls -la coverage-report/ coverage.xml || echo "No coverage files found"
+            set -e
+            cd ~/laravel-app
+
+            echo "🔍 Running tests..."
+            ./vendor/bin/pest --coverage-html=coverage-report --coverage-clover=coverage.xml
+
+            echo "📊 Coverage results:"
+            cat coverage.xml
           EOF
       - name: Upload Coverage Reports
-        if: always()
-        run: |
-          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-          cd ~/laravel-app
-          if [ -f coverage.xml ] && [ -d coverage-report ]; then
-            echo "Found coverage files, preparing to upload..."
-            # Zip the files for download
-            zip -r coverage-artifacts.zip coverage-report/ coverage.xml
-          else
-            echo "No coverage files found!"
-            exit 0
-          fi
-          EOF
-          # Download the zip file
-          scp ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/coverage-artifacts.zip ./
-          # Upload artifact
-          if [ -f coverage-artifacts.zip ]; then
-            unzip coverage-artifacts.zip
-            ls -la coverage-report/ coverage.xml
-            echo "Uploading coverage files..."
-            actions/upload-artifact@v4:
-              name: coverage-reports
-              path: |
-                coverage-report/
-                coverage.xml
-          else
-            echo "No coverage artifacts to upload"
-          fi
-      - name: Final Status Report
-        if: always()
-        run: |
-          if [ "${{ job.status }}" == 'success' ]; then
-            echo "✅ All steps completed successfully"
-          else
-            echo "⚠️ Workflow completed with warnings (some non-critical steps failed)"
-            echo "Coverage reports should still be available in artifacts"
-          fi
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-reports
+          path: |
+            coverage-report/
+            coverage.xml
+          retention-days: 1
+
       - name: Verify Website Accessibility
         run: |
           curl -sSf http://${{ secrets.SSH_HOST }}:8000 || (echo "❌ Website is not accessible!" && exit 1)
