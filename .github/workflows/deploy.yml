@@ -45,6 +45,14 @@ jobs:
         run: |
           ssh -i ~/.ssh/id_rsa ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
             set -e
+
+            echo "🛠️ Checking PHP installation..."
+            if ! command -v php &> /dev/null; then
+              echo "🔧 Installing PHP and required extensions..."
+              sudo apt-get update
+              sudo apt-get install -y php php-cli php-mbstring php-xml php-bcmath php-curl php-zip php-sqlite3 php-mysql unzip curl
+            fi
+
             cd ~/laravel-app
 
             echo "🔧 Fixing permissions..."
@@ -58,10 +66,8 @@ jobs:
             fi
 
             echo "📦 Installing PHP dependencies..."
-            sudo apt-get update
-            sudo apt-get install -y unzip curl php-sqlite3
-
             if ! command -v composer &> /dev/null; then
+              echo "Installing Composer..."
               php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
               php composer-setup.php
               sudo mv composer.phar /usr/local/bin/composer
