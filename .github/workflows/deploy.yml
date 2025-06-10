@@ -85,7 +85,10 @@ jobs:
               rm composer-setup.php
             fi
             echo "Installing Composer dependencies..."
-            sudo composer install --optimize-autoloader --ignore-platform-reqs
+            composer install --optimize-autoloader --ignore-platform-reqs
+            sudo chown -R $USER:www-data vendor
+            sudo chmod -R 775 vendor
+
             echo "Installing test dependencies..."
             composer require pestphp/pest pestphp/pest-plugin-laravel --dev --no-interaction --ignore-platform-reqs
 
