@@ -100,7 +100,7 @@ jobs:
             set -e
             sudo systemctl is-active nginx || (echo "Nginx is not running!" && exit 1)
             sudo systemctl is-active php8.2-fpm || (echo "PHP-FPM is not running!" && exit 1)
-            curl -sSf http://localhost:8000 || (echo "Laravel server not responding!" && exit 1)
+            curl -sSf http://localhost:8080 || (echo "Laravel server not responding!" && exit 1)
           EOF
 
       - name: Run Tests and Generate Coverage
