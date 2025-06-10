@@ -139,10 +139,8 @@ jobs:
             # Stop previous Vite dev server (if any)
             sudo pkill -f "vite" || true
 
-            echo "🔍 Finding npm path..."
-            NPM_PATH=$(which npm)
-            echo "Using npm at: $NPM_PATH"
-            nohup ./node_modules/.bin/vite --host 0.0.0.0 --port=8080 > ~/vite.log 2>&1 &
+            echo "🔍 Starting Vite dev server..."
+            nohup ./node_modules/.bin/vite --host 0.0.0.0 > ~/vite.log 2>&1 &
 
             sleep 10  # ⏳ Wait for servers to start
 
@@ -156,8 +154,15 @@ jobs:
             fi
 
             echo "🧪 Verifying Vite dev server..."
-            if curl -s http://localhost:8080/@vite/client | grep -q 'vite'; then
-              echo "✅ Vite dev server is running."
+            VITE_PORT=$(grep -oP 'Network: http://.*:\K[0-9]+' ~/vite.log | head -n 1)
+            if [ -z "$VITE_PORT" ]; then
+              echo "❌ Could not detect Vite port."
+              tail -n 20 ~/vite.log
+              exit 1
+            fi
+
+            if curl -s http://localhost:$VITE_PORT/@vite/client | grep -q 'vite'; then
+              echo "✅ Vite dev server is running on port $VITE_PORT."
             else
               echo "❌ Vite dev server might not be running properly."
               tail -n 20 ~/vite.log
@@ -167,7 +172,7 @@ jobs:
             echo ""
             echo "🌐 You can now access the app at:"
             echo "➡️  Laravel: http://${{ secrets.SSH_HOST }}:8080"
-            echo "➡️  Vite client: http://${{ secrets.SSH_HOST }}:8080/@vite/client"
+            echo "➡️  Vite client: http://${{ secrets.SSH_HOST }}:$VITE_PORT/@vite/client"
           EOF
 
       - name: Run Tests and Generate Coverage
