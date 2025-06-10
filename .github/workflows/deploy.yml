@@ -1,4 +1,4 @@
-name: Deploy Laravel to Azure VM with SonarCloud Analysis
+name: Deploy Laravel to Azure VM with Password Auth
 
 on:
   push:
@@ -8,18 +8,19 @@ env:
   PHP_VERSION: "8.2"
   NODE_VERSION: "18"
   APP_DIR: "~/laravel-app"
-  SSH_KEY_PATH: "~/.ssh/id_rsa"
 
 jobs:
-  deploy-and-analyze:
-    name: Deploy & Analyze
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # Required for SonarCloud analysis
+
+      - name: Install SSHpass for password authentication
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sshpass
 
       - name: Configure system for file watching
         run: |
@@ -27,8 +28,6 @@ jobs:
           echo "fs.inotify.max_user_watches=524288" | sudo tee -a /etc/sysctl.conf
           echo "fs.inotify.max_user_instances=1024" | sudo tee -a /etc/sysctl.conf
           sudo sysctl -p
-          echo "✅ New limits:"
-          sysctl fs.inotify.{max_user_watches,max_user_instances}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -36,98 +35,73 @@ jobs:
           node-version: "${{ env.NODE_VERSION }}"
           cache: "npm"
 
-      - name: Configure SSH access
+      - name: Deploy application files using password auth
+        env:
+          SSHPASS: ${{ secrets.SSH_PASSWORD }}
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > "${{ env.SSH_KEY_PATH }}"
-          chmod 600 "${{ env.SSH_KEY_PATH }}"
+          # Install rsync if not present
+          sudo apt-get install -y rsync
 
-          # Configure SSH client
-          cat <<EOT >> ~/.ssh/config
-          Host azure-vm
-            HostName ${{ secrets.SSH_HOST }}
-            User ${{ secrets.SSH_USERNAME }}
-            IdentityFile ${{ env.SSH_KEY_PATH }}
-            StrictHostKeyChecking no
-          EOT
-
-      - name: Deploy application files
-        run: |
-          rsync -avz --no-perms --no-owner --no-group --delete \
-            -e "ssh -i ${{ env.SSH_KEY_PATH }}" \
+          sshpass -e rsync -avz --no-perms --no-owner --no-group --delete \
+            -e "ssh -o StrictHostKeyChecking=no" \
             --exclude={.git,.env,storage/*,node_modules,.idea} \
-            ./ azure-vm:${{ env.APP_DIR }}/
+            ./ ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:${{ env.APP_DIR }}/
 
       - name: Setup server environment
+        env:
+          SSHPASS: ${{ secrets.SSH_PASSWORD }}
         run: |
-          ssh azure-vm << 'REMOTE_SCRIPT'
+          sshpass -e ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'REMOTE_SCRIPT'
           set -euo pipefail
 
-          # Helper function for error handling
+          # Helper function
           fail() { echo "❌ Error: $1" >&2; exit 1; }
 
-          echo "🛠️ Installing PHP ${{ env.PHP_VERSION }} and extensions..."
+          echo "🛠️ Updating packages..."
           sudo apt-get update -y || fail "Failed to update packages"
-          sudo apt-get install -y software-properties-common || fail "Failed to install common packages"
-          sudo add-apt-repository ppa:ondrej/php -y || fail "Failed to add PHP repo"
-          sudo apt-get update -y || fail "Failed to update after adding repo"
 
+          echo "📦 Installing PHP ${{ env.PHP_VERSION }}..."
+          sudo apt-get install -y software-properties-common
+          sudo add-apt-repository ppa:ondrej/php -y
+          sudo apt-get update -y
           sudo apt-get install -y \
             php${{ env.PHP_VERSION }} \
             php${{ env.PHP_VERSION }}-{cli,mbstring,xml,bcmath,curl,zip,mysql,sqlite3} \
-            unzip curl nginx || fail "Failed to install PHP packages"
+            unzip curl nginx || fail "PHP installation failed"
 
-          echo "🛠️ Installing Node.js..."
-          curl -fsSL https://deb.nodesource.com/setup_${{ env.NODE_VERSION }}.x | sudo -E bash - || fail "Failed to setup Node.js"
-          sudo apt-get install -y nodejs || fail "Failed to install Node.js"
+          echo "📦 Installing Node.js..."
+          curl -fsSL https://deb.nodesource.com/setup_${{ env.NODE_VERSION }}.x | sudo -E bash -
+          sudo apt-get install -y nodejs || fail "Node.js installation failed"
 
-          echo "📦 Installing Composer..."
-          if ! command -v composer &> /dev/null; then
-            EXPECTED_CHECKSUM="$(php -r 'copy("https://composer.github.io/installer.sig", "php://stdout");')"
-            php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
-            ACTUAL_CHECKSUM="$(php -r "echo hash_file('sha384', 'composer-setup.php');")"
-
-            if [ "$EXPECTED_CHECKSUM" != "$ACTUAL_CHECKSUM" ]; then
-              fail "Composer installer checksum verification failed"
-            fi
-
-            php composer-setup.php --quiet || fail "Composer installation failed"
-            sudo mv composer.phar /usr/local/bin/composer
-            sudo chmod +x /usr/local/bin/composer
-            rm composer-setup.php
-          fi
-
-          echo "🔧 Configuring environment..."
+          echo "🔧 Setting up application..."
           cd ${{ env.APP_DIR }} || fail "App directory not found"
 
           # Install dependencies
-          composer install --optimize-autoloader --no-interaction --ignore-platform-reqs || fail "Composer install failed"
-          npm ci || fail "npm install failed"
+          composer install --optimize-autoloader --no-interaction --ignore-platform-reqs
+          npm ci
 
-          # Setup environment file
+          # Environment setup
           if [ ! -f .env ]; then
-            cp .env.example .env || fail "Failed to create .env file"
-            php artisan key:generate || fail "Failed to generate app key"
+            cp .env.example .env
+            php artisan key:generate
           fi
 
-          # Database setup
-          php artisan migrate --force || fail "Database migration failed"
-
-          # Permissions
+          # Database and permissions
+          php artisan migrate --force
           sudo chown -R $USER:www-data storage bootstrap/cache
           sudo chmod -R ug+rwx storage bootstrap/cache
-
-          # Clear caches
           php artisan config:clear
           php artisan view:clear
           php artisan cache:clear
 
-          echo "✅ Server setup completed successfully"
+          echo "✅ Server setup completed"
           REMOTE_SCRIPT
 
       - name: Start application servers
+        env:
+          SSHPASS: ${{ secrets.SSH_PASSWORD }}
         run: |
-          ssh azure-vm << 'REMOTE_SCRIPT'
+          sshpass -e ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'REMOTE_SCRIPT'
           set -euo pipefail
 
           cd ${{ env.APP_DIR }}
@@ -136,54 +110,57 @@ jobs:
           pkill -f "php artisan serve" || true
           pkill -f "vite" || true
 
-          # Start Laravel server
+          # Start servers
           nohup php artisan serve --host=0.0.0.0 --port=8080 > ~/laravel.log 2>&1 &
-
-          # Start Vite
           nohup npm run dev -- --host 0.0.0.0 > ~/vite.log 2>&1 &
 
           sleep 10  # Wait for servers to start
 
           # Verify servers
-          if ! curl -s http://localhost:8080 | grep -q '<!DOCTYPE'; then
-            echo "❌ Laravel server failed to start"
+          curl -s http://localhost:8080 | grep -q '<!DOCTYPE' || {
+            echo "❌ Laravel server failed"
             tail -n 20 ~/laravel.log
             exit 1
-          fi
+          }
 
           VITE_PORT=$(grep -oP 'Network: http://.*:\K[0-9]+' ~/vite.log | head -n 1)
-          if [ -z "$VITE_PORT" ] || ! curl -s http://localhost:$VITE_PORT/@vite/client | grep -q 'vite'; then
-            echo "❌ Vite server failed to start"
+          curl -s http://localhost:$VITE_PORT/@vite/client | grep -q 'vite' || {
+            echo "❌ Vite server failed"
             tail -n 20 ~/vite.log
             exit 1
-          fi
+          }
 
           echo "🌐 Application URLs:"
           echo "Laravel: http://${{ secrets.SSH_HOST }}:8080"
           echo "Vite: http://${{ secrets.SSH_HOST }}:$VITE_PORT"
           REMOTE_SCRIPT
 
-      - name: Run tests and generate coverage
+      - name: Run tests
+        env:
+          SSHPASS: ${{ secrets.SSH_PASSWORD }}
         continue-on-error: true
         run: |
-          ssh azure-vm << 'REMOTE_SCRIPT'
+          sshpass -e ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'REMOTE_SCRIPT'
           set +e
           cd ${{ env.APP_DIR }}
-
-          # Run tests with coverage
           ./vendor/bin/pest --coverage-html=coverage-report --coverage-clover=coverage.xml
-
-          if [ -f coverage.xml ]; then
-            COVERAGE=$(grep -oP 'filename.*?line-rate="\K[^"]+' coverage.xml | awk '{sum += $1} END {print sum/NR*100}')
-            echo "coverage_percentage=$COVERAGE" >> $GITHUB_OUTPUT
-            echo "✅ Test coverage: ${COVERAGE}%"
-          else
-            echo "❌ Coverage report not generated"
-          fi
           REMOTE_SCRIPT
 
-      - name: Upload coverage reports
+      - name: Download coverage reports
+        env:
+          SSHPASS: ${{ secrets.SSH_PASSWORD }}
+        run: |
+          sshpass -e scp -o StrictHostKeyChecking=no \
+            ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:${{ env.APP_DIR }}/coverage-report/ ./ \
+            || echo "No coverage report found"
+
+          sshpass -e scp -o StrictHostKeyChecking=no \
+            ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:${{ env.APP_DIR }}/coverage.xml ./ \
+            || echo "No coverage.xml found"
+
+      - name: Upload coverage artifacts
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: coverage-reports
           path: |
@@ -191,23 +168,8 @@ jobs:
             coverage.xml
           retention-days: 1
 
-      - name: SonarCloud analysis
-        if: success() || failure() # Always run even if previous steps failed
-        uses: sonarsource/sonarcloud-github-action@master
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        with:
-          args: >
-            -Dsonar.projectKey=your-project-key
-            -Dsonar.organization=your-org
-            -Dsonar.host.url=https://sonarcloud.io
-            -Dsonar.php.coverage.reportPaths=coverage.xml
-            -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
-
-      - name: Final status
+      - name: Deployment status
         run: |
-          echo "Deployment status: ${{ job.status }}"
           if [ "${{ job.status }}" == 'success' ]; then
             echo "🚀 Deployment successful!"
           else
