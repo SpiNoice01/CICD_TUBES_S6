@@ -96,8 +96,7 @@ jobs:
                 location ~ /\.ht {
                     deny all;
                 }
-            }
-            EOL'
+            } EOL'
 
             # Enable Nginx configuration
             sudo ln -sf /etc/nginx/sites-available/laravel /etc/nginx/sites-enabled/laravel
