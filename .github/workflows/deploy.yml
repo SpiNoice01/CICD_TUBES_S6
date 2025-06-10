@@ -12,156 +12,128 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Increase file watcher limit
-        run: |
-          echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.conf
-          echo fs.inotify.max_user_instances=1024 | sudo tee -a /etc/sysctl.conf
-          sudo sysctl -p
-          echo "✅ File watcher limits updated:"
-          sysctl fs.inotify.max_user_watches
-          sysctl fs.inotify.max_user_instances
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "18"
 
       - name: Install npm dependencies
-        run: npm ci
+        run: npm install
 
       - name: Build assets
         run: npm run build
 
-      - name: Setup SSH Key
+      - name: Setup SSH
+        shell: bash
         run: |
           mkdir -p ~/.ssh
-          printf "%s\n" "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
-          echo -e "Host *\n  StrictHostKeyChecking no" > ~/.ssh/config
-
-      - name: Deploy with rsync
+          echo "Host *" > ~/.ssh/config
+          echo "  StrictHostKeyChecking no" >> ~/.ssh/config
+      - name: Deploy Application via rsync
+        shell: bash
         run: |
           rsync -avz --no-perms --no-owner --no-group --delete \
-            -e "ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no" \
+            -e "ssh -o StrictHostKeyChecking=no" \
             --exclude='.git' \
             --exclude='.env' \
             --exclude='storage/*' \
             --exclude='node_modules' \
             ./ ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/laravel-app/
-
       - name: Remote Setup & Deploy
+        shell: bash
         run: |
-          ssh -i ~/.ssh/id_rsa ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
             set -e
-            echo "🛠️ Installing PHP 8.2 and extensions..."
-            sudo apt-get update -y
-            sudo apt-get install -y software-properties-common
-            sudo add-apt-repository ppa:ondrej/php -y
-            sudo apt-get update -y
-            sudo apt-get install -y php8.2 php8.2-cli php8.2-mbstring php8.2-xml php8.2-bcmath php8.2-curl php8.2-zip php8.2-mysql php8.2-sqlite3 unzip curl
-            echo "🛠️ Installing Node.js and npm..."
-            curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-            sudo apt-get install -y nodejs
-            echo "✅ Node.js and npm installed:"
-            node -v
-            npm -v
-            echo "📦 Installing Composer (if needed)..."
-            if ! command -v composer &> /dev/null; then
-              php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
-              php composer-setup.php || { echo "❌ Failed to install Composer"; exit 1; }
-              sudo mv composer.phar /usr/local/bin/composer
-              sudo chmod +x /usr/local/bin/composer
-              rm composer-setup.php
-            fi
-            echo "✅ Composer installed:"
-            composer --version
-            echo "📦 Installing Laravel dependencies..."
-            cd ~/laravel-app || { echo "❌ Laravel app directory not found"; exit 1; }
-            composer install --optimize-autoloader --ignore-platform-reqs || { echo "❌ Failed to install Laravel dependencies"; exit 1; }
-            echo "📦 Installing test dependencies..."
-            composer require pestphp/pest pestphp/pest-plugin-laravel --dev --no-interaction --ignore-platform-reqs || { echo "❌ Failed to install test dependencies"; exit 1; }
-            echo "🌐 Installing Nginx web server..."
-            sudo apt update -y
-            sudo apt install -y nginx
-            echo "✅ Nginx installed:"
-            nginx -v
-            echo "🛡️ Setting up firewall rules..."
-            sudo ufw allow OpenSSH
-            sudo ufw allow 80/tcp
-            sudo ufw allow 8080/tcp
-            sudo ufw allow 5173/tcp
-            sudo ufw --force enable
-            echo "✅ Firewall rules configured:"
-            sudo ufw status verbose
-            echo "🔧 Setting PHP 8.2 as default..."
-            sudo update-alternatives --set php /usr/bin/php8.2
-            echo "✅ PHP version set to:"
-            php -v
-            echo "📦 Installing npm dependencies..."
-            npm ci || { echo "❌ Failed to install npm dependencies"; exit 1; }
-            npm run build || { echo "❌ Failed to build frontend"; exit 1; }
+            cd ~/laravel-app
             echo "🔧 Fixing permissions..."
             sudo chown -R $USER:www-data storage bootstrap/cache
-            sudo chmod -R ug+rwx storage bootstrap/cache
-            echo "✅ Permissions fixed."
+            sudo chmod -R 775 storage bootstrap/cache
             echo "🌱 Setting up environment..."
             if [ ! -f .env ]; then
-              cp .env.example .env || { echo "❌ Failed to copy .env file"; exit 1; }
+              cp .env.example .env
+              php artisan key:generate
+              echo "✅ Application key generated and saved to .env"
+            else
+              echo "✅ .env already exists, skipping key generation"
             fi
-            sed -i 's/^APP_ENV=.*/APP_ENV=production/' .env
-            sed -i 's/^APP_DEBUG=.*/APP_DEBUG=false/' .env
-            sed -i 's|^APP_URL=.*|APP_URL=http://${{ secrets.SSH_HOST }}|' .env
-            sed -i 's|^ASSET_URL=.*|ASSET_URL=http://${{ secrets.SSH_HOST }}|' .env
-            sed -i 's|^VITE_APP_URL=.*|VITE_APP_URL=http://${{ secrets.SSH_HOST }}|' .env
-
-            if ! grep -q "^APP_KEY=base64:" .env; then
-              echo "🔐 Generating Laravel APP_KEY..."
-              php artisan key:generate || { echo "❌ Failed to generate APP_KEY"; exit 1; }
+            echo "📦 Installing PHP dependencies..."
+            sudo apt-get update
+            sudo apt-get install -y php-sqlite3 unzip curl
+            if ! [ -x "$(command -v composer)" ]; then
+              php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
+              EXPECTED_SIGNATURE="$(php -r 'copy(\"https://composer.github.io/installer.sig\", \"php://stdout\");')"
+              php -r "if (hash_file('sha384', 'composer-setup.php') === '$EXPECTED_SIGNATURE') { echo 'Installer verified'; } else { echo 'Installer corrupt'; unlink('composer-setup.php'); exit(1); }"
+              php composer-setup.php
+              sudo mv composer.phar /usr/local/bin/composer
+              sudo chmod +x /usr/local/bin/composer
+              php -r "unlink('composer-setup.php');"
             fi
-
+            echo "Installing Composer dependencies..."
+            composer install --optimize-autoloader --ignore-platform-reqs
+            echo "Installing test dependencies..."
+            composer require pestphp/pest pestphp/pest-plugin-laravel --dev --no-interaction --ignore-platform-reqs
             echo "🗃️ Migrating database..."
-            php artisan migrate --force || { echo "❌ Failed to migrate database"; exit 1; }
-
-            echo "🔗 Creating storage symlink..."
-            php artisan storage:link || echo "⚠️ Failed to create storage symlink"
-
-            echo "📁 Ensuring compiled view directory exists..."
-            mkdir -p storage/framework/views || { echo "❌ Failed to create compiled view directory"; exit 1; }
-
+            php artisan cache:table || true
+            php artisan session:table || true
+            php artisan migrate --force
             echo "🧹 Clearing caches..."
             php artisan config:clear
             php artisan cache:clear
             php artisan view:clear
-            php artisan route:clear
-
-            echo "⚡ Caching configuration, routes, and views..."
-            php artisan config:cache || { echo "❌ Failed to cache config"; exit 1; }
-            php artisan route:cache || { echo "❌ Failed to cache routes"; exit 1; }
-            php artisan view:cache || { echo "❌ Failed to cache views"; exit 1; }
-
-            echo "✅ Remote setup and deployment completed successfully."
-
           EOF
-
-      - name: Run Tests and Generate Coverage
-        continue-on-error: true
+      - name: Start Application Services
+        shell: bash
         run: |
-          ssh -i ~/.ssh/id_rsa ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-            set +e
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
+            set -e
+            echo "♻️ Restarting services..."
+            sudo systemctl restart nginx
+            sudo systemctl restart php8.4-fpm
+            echo "🚀 Starting Laravel development server..."
             cd ~/laravel-app
+            sudo pkill -f "php artisan serve" || true
+            nohup php artisan serve --host=0.0.0.0 --port=8000 > ~/laravel.log 2>&1 &
+            disown
+          EOF
+      - name: Verify Services
+        shell: bash
+        run: |
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
+            set -e
+            echo "✅ Checking services..."
+            sudo systemctl is-active nginx || (echo "Nginx is not running!" && exit 1)
+            sudo systemctl is-active php8.4-fpm || (echo "PHP-FPM is not running!" && exit 1)
+            echo "🌐 Checking web server..."
+            curl -sSf http://localhost:8000 || (echo "Laravel server not responding!" && exit 1)
+          EOF
+      - name: Run Tests and Generate Coverage
+        shell: bash
+        continue-on-error: true # This allows the workflow to continue even if tests fail
+        run: |
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
+            set +e  # Disable immediate exit on error to capture coverage even if tests fail
+            cd ~/laravel-app
+            echo "🔍 Running tests (may fail but will still generate coverage)..."
             ./vendor/bin/pest --coverage-html=coverage-report --coverage-clover=coverage.xml || true
+            echo "📊 Test execution completed (ignoring failures)"
+            # Always try to generate the coverage report
             if [ -f coverage.xml ]; then
-              echo "✅ Coverage generated"
-              grep -oP 'filename.*?line-rate="\K[^"]+' coverage.xml | awk '{sum += $1} END {print "Avg coverage: " sum/NR*100 "%"}'
+              echo "✅ Coverage report generated successfully"
+              echo "Coverage Summary:"
+              grep -oP 'filename.*?line-rate="\K[^"]+' coverage.xml | \
+                awk '{sum += $1; count++} END {print "Average coverage: " sum/count*100 "%"}'
             else
-              echo "❌ Coverage report not found"
+              echo "❌ Failed to generate coverage report"
+              exit 0  # Still continue the workflow
             fi
+            # Always show the last 20 lines of Laravel log for debugging
+            echo "📝 Last 20 lines of Laravel log:"
             tail -20 ~/laravel.log || echo "No Laravel log found"
           EOF
-
       - name: Upload Coverage Reports
-        if: always()
+        if: always() # Always upload artifacts even if previous steps fail
         uses: actions/upload-artifact@v4
         with:
           name: coverage-reports
@@ -174,7 +146,11 @@ jobs:
         if: always()
         run: |
           if [ "${{ job.status }}" == 'success' ]; then
-            echo "✅ Deployment complete"
+            echo "✅ All steps completed successfully"
           else
-            echo "⚠️ Completed with warnings"
+            echo "⚠️ Workflow completed with warnings (some non-critical steps failed)"
+            echo "Coverage reports should still be available in artifacts"
           fi
+      - name: Verify Website Accessibility
+        run: |
+          curl -sSf http://${{ secrets.SSH_HOST }}:8000 || (echo "❌ Website is not accessible!" && exit 1)
