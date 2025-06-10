@@ -126,18 +126,27 @@ jobs:
 
           echo "🔧 Setting up Laravel environment..."
 
-          # Create .env file
-          if [ ! -f .env ]; then
-            cp .env.example .env
+          # Always create a fresh .env file to avoid conflicts
+          cp .env.example .env
 
-            # Configure database settings
-            sed -i 's/DB_CONNECTION=sqlite/DB_CONNECTION=mysql/' .env
-            sed -i 's/DB_HOST=127.0.0.1/DB_HOST=localhost/' .env
-            sed -i 's/DB_PORT=3306/DB_PORT=3306/' .env
-            sed -i 's/DB_DATABASE=laravel/DB_DATABASE=laravel_app/' .env
-            sed -i 's/DB_USERNAME=root/DB_USERNAME=laravel_user/' .env
-            sed -i "s/DB_PASSWORD=/DB_PASSWORD=${{ secrets.DB_PASSWORD }}/" .env
-          fi
+          # Configure database settings for MySQL
+          sed -i 's/DB_CONNECTION=.*/DB_CONNECTION=mysql/' .env
+          sed -i 's/DB_HOST=.*/DB_HOST=localhost/' .env
+          sed -i 's/DB_PORT=.*/DB_PORT=3306/' .env
+          sed -i 's/DB_DATABASE=.*/DB_DATABASE=laravel_app/' .env
+          sed -i 's/DB_USERNAME=.*/DB_USERNAME=laravel_user/' .env
+          sed -i "s/DB_PASSWORD=.*/DB_PASSWORD=${{ secrets.DB_PASSWORD }}/" .env
+
+          # Remove any SQLite database path if it exists
+          sed -i '/DB_DATABASE=.*\.sqlite/d' .env
+
+          # Ensure no cache database references exist
+          grep -v "CACHE_DRIVER=database" .env > .env.tmp && mv .env.tmp .env || true
+
+          # Add file-based cache configuration
+          echo "CACHE_DRIVER=file" >> .env
+          echo "SESSION_DRIVER=file" >> .env
+          echo "QUEUE_CONNECTION=sync" >> .env
 
           # Install Composer dependencies
           echo "📦 Installing Composer dependencies..."
@@ -149,21 +158,32 @@ jobs:
           # Create required directories
           mkdir -p storage/framework/{cache,sessions,views}
           mkdir -p storage/logs
+          mkdir -p storage/app/public
           mkdir -p bootstrap/cache
 
           # Set proper permissions
           sudo chown -R $USER:www-data storage bootstrap/cache
           sudo chmod -R 775 storage bootstrap/cache
 
-          # Clear and cache configurations
-          php artisan config:clear
-          php artisan cache:clear
-          php artisan view:clear
+          # Clear all caches to ensure fresh configuration
+          php artisan config:clear || true
+          php artisan cache:clear || true
+          php artisan view:clear || true
+          php artisan route:clear || true
+
+          # Cache configurations
           php artisan config:cache
+
+          # Test database connection before running migrations
+          echo "🔍 Testing database connection..."
+          php artisan migrate:status || echo "Database connection test failed, but continuing..."
 
           # Run database migrations
           echo "🗃️ Running database migrations..."
           php artisan migrate --force
+
+          # Create storage symlink if it doesn't exist
+          php artisan storage:link || true
 
           # Optional: Seed database (uncomment if you have seeders)
           # php artisan db:seed --force
@@ -253,6 +273,29 @@ jobs:
           sudo systemctl is-active nginx
 
           echo "✅ Services started successfully"
+          EOF
+
+      - name: Verify Configuration
+        shell: bash
+        run: |
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
+          set -e
+          cd ~/laravel-app
+
+          echo "🔍 Verifying Laravel configuration..."
+
+          # Show current database configuration
+          echo "Database configuration:"
+          php artisan tinker --execute="echo config('database.default') . PHP_EOL; print_r(config('database.connections.mysql'));"
+
+          # Test basic artisan commands
+          php artisan --version
+
+          # Check if .env file has correct database config
+          echo "Environment file database settings:"
+          grep "DB_" .env
+
+          echo "✅ Configuration verification completed"
           EOF
 
       - name: Run Tests and Generate Coverage
