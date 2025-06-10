@@ -83,6 +83,12 @@ jobs:
             php artisan cache:clear
             php artisan view:clear
           EOF
+
+      - name: Build assets
+        run: |
+          npm run build
+          # Ensure assets are included in deployment
+          cp -r public/build ~/laravel-app/public/
       - name: Start Application Services
         shell: bash
         run: |
